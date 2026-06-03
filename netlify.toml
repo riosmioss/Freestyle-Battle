@@ -1,0 +1,19 @@
+# Netlify config for the Freestyle Battle CLIENT (lives in /client).
+# Placed at the repo root so Netlify auto-detects everything on import —
+# no manual build settings needed. The server URL is baked in here so the
+# client knows where to connect.
+
+[build]
+  base = "client"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # The always-on game server on Render.
+  VITE_SERVER_URL = "https://freestyle-battle-server.onrender.com"
+
+# Single-page-app fallback so every route serves index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
