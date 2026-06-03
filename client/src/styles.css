@@ -725,6 +725,45 @@ body {
 .results__actions { display: grid; gap: 10px; margin-top: 22px; }
 .results__waiting { margin-top: 22px; }
 
+/* ---------- Mic check ---------- */
+.miccheck { padding-top: 8px; padding-bottom: 14px; }
+.miccheck__head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 0;
+  color: var(--cream);
+}
+.miccheck__title { margin: 0; }
+.miccheck__toggle {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--volt);
+}
+.miccheck__body { margin-top: 10px; display: grid; gap: 12px; justify-items: start; }
+.meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 40px;
+  width: 100%;
+}
+.meter__bar {
+  flex: 1;
+  height: 100%;
+  background: var(--panel-2);
+  border-radius: 2px;
+  transition: background 0.05s linear;
+}
+.meter__bar--on { background: var(--volt); }
+.meter__bar--on.meter__bar--hot { background: var(--hot); }
+
 /* ---------- Countdown turn label ---------- */
 .countdown__turn {
   font-family: var(--mono);

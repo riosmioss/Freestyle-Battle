@@ -23,7 +23,7 @@ export default function App() {
   } else {
     switch (room.phase) {
       case 'lobby':
-        screen = <Lobby room={room} you={you} actions={actions} />;
+        screen = <Lobby room={room} you={you} actions={actions} mic={mic} />;
         break;
       case 'countdown':
         screen = <Countdown room={room} you={you} />;
@@ -38,7 +38,7 @@ export default function App() {
         screen = <Results room={room} you={you} actions={actions} recordings={recordings} />;
         break;
       default:
-        screen = <Lobby room={room} you={you} actions={actions} />;
+        screen = <Lobby room={room} you={you} actions={actions} mic={mic} />;
     }
   }
 

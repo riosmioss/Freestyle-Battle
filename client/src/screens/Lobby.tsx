@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import Equalizer from '../components/Equalizer';
+import MicCheck from '../components/MicCheck';
 import type { RoomState } from '../types';
 import type { GameActions } from '../useGame';
+import type { MicState } from '../useMic';
 
 interface Props {
   room: RoomState;
   you: string;
   actions: GameActions;
+  mic: MicState;
 }
 
 const ROUND_LENGTHS = [30, 60, 90, 120];
 
-export default function Lobby({ room, you, actions }: Props) {
+export default function Lobby({ room, you, actions, mic }: Props) {
   const isHost = room.hostId === you;
   const [url, setUrl] = useState('');
   const [label, setLabel] = useState('');
@@ -143,6 +146,8 @@ export default function Lobby({ room, you, actions }: Props) {
           )}
         </section>
       </div>
+
+      <MicCheck mic={mic} />
 
       {/* Host round controls */}
       {isHost ? (
