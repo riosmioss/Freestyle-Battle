@@ -11,8 +11,8 @@ import type {
   RoundResults,
 } from './types.js';
 
-const COUNTDOWN_MS = 5000; // "beat drops in 5..." before each MC's turn
-const UPLOAD_GRACE_MS = 12000; // extra time after a turn for the upload to land
+const COUNTDOWN_MS = 5000; // "beat drops in 5..." before everyone records
+const UPLOAD_GRACE_MS = 15000; // time after the window for uploads to land
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 
 function makeCode(taken: Set<string>): string {
@@ -47,12 +47,10 @@ interface Room {
   roundLength: number;
   roundNumber: number;
 
-  // turn-based performance
-  turnOrder: string[];
-  currentTurnIndex: number;
-  currentPerformerId: string | null;
+  // Simultaneous performance: everyone records at once.
+  expectedPerformers: string[]; // who was online when the round started
   countdownEndsAt: number | null;
-  performStartTimestamp: number | null;
+  performStartTimestamp: number | null; // beat drop / record start (t=0)
   performEndsAt: number | null;
   recordings: Map<string, StoredRecording>;
 
@@ -90,9 +88,7 @@ export class Store {
       activeBeatId: null,
       roundLength: 60,
       roundNumber: 0,
-      turnOrder: [],
-      currentTurnIndex: -1,
-      currentPerformerId: null,
+      expectedPerformers: [],
       countdownEndsAt: null,
       performStartTimestamp: null,
       performEndsAt: null,
@@ -119,24 +115,23 @@ export class Store {
     return { room };
   }
 
-  removePlayer(socketId: string): { room?: Room; deleted: boolean; wasPerformer: boolean } {
+  removePlayer(socketId: string): { room?: Room; deleted: boolean } {
     const room = this.getRoomBySocket(socketId);
     this.socketRoom.delete(socketId);
-    if (!room) return { deleted: false, wasPerformer: false };
+    if (!room) return { deleted: false };
 
-    const wasPerformer = room.currentPerformerId === socketId;
     room.players.delete(socketId);
     room.ratings.delete(socketId);
 
     if (room.players.size === 0) {
       this.destroyRoom(room);
-      return { deleted: true, wasPerformer };
+      return { deleted: true };
     }
     if (room.hostId === socketId) {
       const next = room.players.keys().next().value as string | undefined;
       if (next) room.hostId = next;
     }
-    return { room, deleted: false, wasPerformer };
+    return { room, deleted: false };
   }
 
   private destroyRoom(room: Room) {
@@ -189,7 +184,7 @@ export class Store {
     return list;
   }
 
-  // ---- Round / turn engine ----
+  // ---- Round engine (everyone records simultaneously) ----
 
   startBattle(room: Room, cb: RoundCallbacks): { error?: string } {
     if (room.phase !== 'lobby' && room.phase !== 'results') {
@@ -197,36 +192,17 @@ export class Store {
     }
     if (!room.activeBeatId) return { error: 'Pick a beat first.' };
 
-    const order = [...room.players.values()].filter((p) => p.online).map((p) => p.id);
-    if (order.length === 0) return { error: 'No MCs to perform.' };
+    const online = [...room.players.values()].filter((p) => p.online).map((p) => p.id);
+    if (online.length === 0) return { error: 'No MCs to perform.' };
 
     room.timers.forEach(clearTimeout);
     room.timers = [];
     room.roundNumber += 1;
-    room.turnOrder = order;
+    room.expectedPerformers = online;
     room.recordings = new Map();
     room.ratings = new Map();
     room.results = null;
 
-    this.beginTurn(room, 0, cb);
-    return {};
-  }
-
-  private beginTurn(room: Room, index: number, cb: RoundCallbacks) {
-    room.timers.forEach(clearTimeout);
-    room.timers = [];
-
-    // Skip past anyone who has left since the round began.
-    while (index < room.turnOrder.length && !room.players.has(room.turnOrder[index])) {
-      index += 1;
-    }
-    if (index >= room.turnOrder.length) {
-      this.enterRating(room, cb);
-      return;
-    }
-
-    room.currentTurnIndex = index;
-    room.currentPerformerId = room.turnOrder[index];
     const now = Date.now();
     room.phase = 'countdown';
     room.countdownEndsAt = now + COUNTDOWN_MS;
@@ -240,24 +216,14 @@ export class Store {
         cb.broadcast(room);
       }, COUNTDOWN_MS),
     );
-    // Safety net: advance even if the upload never arrives.
+    // Backstop: move to rating after the window + grace, with whatever landed.
     room.timers.push(
       setTimeout(() => {
-        this.advanceTurn(room, index, cb);
+        if (room.phase === 'performing' || room.phase === 'countdown') this.enterRating(room, cb);
       }, COUNTDOWN_MS + room.roundLength * 1000 + UPLOAD_GRACE_MS),
     );
-  }
 
-  private advanceTurn(room: Room, fromIndex: number, cb: RoundCallbacks) {
-    if (room.currentTurnIndex !== fromIndex) return; // already moved on
-    this.beginTurn(room, fromIndex + 1, cb);
-  }
-
-  // Called when the current performer leaves mid-turn.
-  performerLeft(room: Room, cb: RoundCallbacks) {
-    if (room.phase === 'countdown' || room.phase === 'performing') {
-      this.advanceTurn(room, room.currentTurnIndex, cb);
-    }
+    return {};
   }
 
   submitRecording(
@@ -266,23 +232,38 @@ export class Store {
     rec: StoredRecording,
     cb: RoundCallbacks,
   ): { error?: string } {
-    if (room.currentPerformerId !== performerId) {
-      return { error: 'It is not your turn.' };
+    if (room.phase !== 'performing') {
+      return { error: 'Not in the recording phase.' };
     }
-    if (room.phase !== 'performing' && room.phase !== 'countdown') {
-      return { error: 'Not in a performing phase.' };
-    }
+    if (!room.players.has(performerId)) return { error: 'You are not in this room.' };
     room.recordings.set(performerId, rec);
-    this.advanceTurn(room, room.currentTurnIndex, cb);
+    // If everyone still here has uploaded, jump straight to rating.
+    if (!this.maybeFinalize(room, cb)) cb.broadcast(room);
     return {};
+  }
+
+  // Move to rating once every still-present expected performer has uploaded.
+  private maybeFinalize(room: Room, cb: RoundCallbacks): boolean {
+    if (room.phase !== 'performing') return false;
+    const pending = room.expectedPerformers.filter(
+      (id) => room.players.has(id) && !room.recordings.has(id),
+    );
+    if (pending.length === 0) {
+      this.enterRating(room, cb);
+      return true;
+    }
+    return false;
+  }
+
+  // Re-check after a player leaves (they may have been the last one pending).
+  recheckPerforming(room: Room, cb: RoundCallbacks) {
+    this.maybeFinalize(room, cb);
   }
 
   private enterRating(room: Room, cb: RoundCallbacks) {
     room.timers.forEach(clearTimeout);
     room.timers = [];
     room.phase = 'rating';
-    room.currentTurnIndex = -1;
-    room.currentPerformerId = null;
     room.countdownEndsAt = null;
     room.performStartTimestamp = null;
     room.performEndsAt = null;
@@ -290,7 +271,6 @@ export class Store {
     cb.recordings(room); // ship takes to clients
     cb.broadcast(room);
 
-    // Safety net: finalize if not everyone rates.
     room.timers.push(
       setTimeout(() => {
         if (room.phase === 'rating') this.finalizeResults(room, cb);
@@ -334,7 +314,6 @@ export class Store {
       }
     }
 
-    // Only people who actually recorded a take are scored.
     const performers = [...room.recordings.keys()];
     const scores: PlayerRoundScore[] = performers.map((pid) => {
       const list = received.get(pid) ?? [];
@@ -375,9 +354,7 @@ export class Store {
     room.timers.forEach(clearTimeout);
     room.timers = [];
     room.phase = 'lobby';
-    room.turnOrder = [];
-    room.currentTurnIndex = -1;
-    room.currentPerformerId = null;
+    room.expectedPerformers = [];
     room.countdownEndsAt = null;
     room.performStartTimestamp = null;
     room.performEndsAt = null;
@@ -385,7 +362,6 @@ export class Store {
     room.ratings = new Map();
   }
 
-  // The recorded takes for the current round (for shipping to clients).
   roundRecordings(room: Room): RecordingMeta[] {
     return [...room.recordings.entries()].map(([performerId, r]) => ({
       performerId,
@@ -407,9 +383,6 @@ export class Store {
       activeBeatId: room.activeBeatId,
       roundLength: room.roundLength,
       roundNumber: room.roundNumber,
-      turnOrder: room.turnOrder,
-      currentTurnIndex: room.currentTurnIndex,
-      currentPerformerId: room.currentPerformerId,
       performedIds: [...room.recordings.keys()],
       countdownEndsAt: room.countdownEndsAt,
       performStartTimestamp: room.performStartTimestamp,

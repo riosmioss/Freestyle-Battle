@@ -22,8 +22,6 @@ function fmt(ms: number): string {
 }
 
 export default function Performing({ room, you, mic, actions }: Props) {
-  const isMyTurn = room.currentPerformerId === you;
-  const performer = room.players.find((p) => p.id === room.currentPerformerId);
   const beat = room.beats.find((b) => b.id === room.activeBeatId);
   const remaining = useCountdown(room.performEndsAt);
   const total = room.roundLength * 1000;
@@ -33,15 +31,17 @@ export default function Performing({ room, you, mic, actions }: Props) {
   const beatRef = useRef<BeatPlayerHandle>(null);
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [done, setDone] = useState(false);
 
-  // Record my verse over the beat for the duration of my turn, then upload.
+  const iSaved = room.performedIds.includes(you) || done;
+
+  // Everyone records their verse over the beat for the whole window, then uploads.
   useEffect(() => {
-    if (!isMyTurn || !mic.stream || room.performEndsAt == null) return;
+    if (!mic.stream || room.performEndsAt == null) return;
     let stopped = false;
     const chunks: Blob[] = [];
     let beatOffset = 0;
 
-    // Play the beat so I can rap to it.
     beatRef.current?.seekTo(0);
     beatRef.current?.play();
 
@@ -84,6 +84,8 @@ export default function Performing({ room, you, mic, actions }: Props) {
       } catch {
         /* noop */
       }
+      setUploading(false);
+      setDone(true);
       beatRef.current?.pause();
     };
 
@@ -98,67 +100,66 @@ export default function Performing({ room, you, mic, actions }: Props) {
 
     return () => {
       clearTimeout(timer);
-      // Upload whatever we have if the turn ends for any reason.
       void finish();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMyTurn, mic.stream, room.performStartTimestamp]);
+  }, [mic.stream, room.performStartTimestamp]);
 
-  // ---- Your turn ----
-  if (isMyTurn) {
-    return (
-      <div className="performing performing--you">
-        <p className="performing__tag">
-          {uploading ? 'SAVING YOUR TAKE…' : recording ? 'YOU’RE UP · RECORDING' : 'GET READY…'}
-          {recording && <span className="rec-dot" />}
-        </p>
-        <div className={`battle__timer ${low ? 'battle__timer--low' : ''}`}>{fmt(remaining)}</div>
-        <div className="battle__progress">
-          <span className="battle__progress-fill" style={{ width: `${pct}%` }} />
-        </div>
+  const savedCount = room.performedIds.length;
+  const totalPlayers = room.players.length;
 
-        {beat && <BeatPlayer ref={beatRef} videoId={beat.videoId} />}
-        <p className="battle__beatlabel">{beat?.label}</p>
+  return (
+    <div className="performing">
+      <p className="performing__tag">
+        {iSaved
+          ? 'TAKE SAVED'
+          : uploading
+            ? 'SAVING YOUR TAKE…'
+            : recording
+              ? 'RECORDING — EVERYONE’S SPITTING NOW'
+              : 'GET READY…'}
+        {recording && !iSaved && <span className="rec-dot" />}
+      </p>
 
+      <div className={`battle__timer ${low ? 'battle__timer--low' : ''}`}>
+        {iSaved ? '✓' : fmt(remaining)}
+      </div>
+      <div className="battle__progress">
+        <span className="battle__progress-fill" style={{ width: `${iSaved ? 100 : pct}%` }} />
+      </div>
+
+      {beat && <BeatPlayer ref={beatRef} videoId={beat.videoId} className={iSaved ? 'beat-player--hidden' : ''} />}
+      <p className="battle__beatlabel">{beat?.label}</p>
+
+      {!iSaved && (
         <button className="btn btn--ghost btn--sm" onClick={() => beatRef.current?.play()}>
           🔊 Can’t hear the beat? Tap to start it
         </button>
+      )}
 
-        {!mic.stream && (
-          <p className="error">{mic.error ?? 'Waiting for microphone…'}</p>
-        )}
+      {!mic.stream && !iSaved && <p className="error">{mic.error ?? 'Waiting for microphone…'}</p>}
+
+      {iSaved ? (
+        <>
+          <p className="muted performing__hint">
+            Your take is in. Waiting for everyone to finish — {savedCount}/{totalPlayers} saved.
+          </p>
+          <Equalizer bars={11} className="performing__eq" />
+        </>
+      ) : (
         <p className="muted performing__hint">
           🎧 Headphones recommended. Spit your bars — your take saves automatically when the timer hits zero.
         </p>
-      </div>
-    );
-  }
+      )}
 
-  // ---- Someone else's turn ----
-  return (
-    <div className="performing performing--watch">
-      <p className="performing__tag">ON THE MIC</p>
-      <h1 className="performing__name">{performer?.handle ?? 'MC'}</h1>
-      <Equalizer bars={15} className="performing__eq" />
-      <div className={`battle__timer ${low ? 'battle__timer--low' : ''}`}>{fmt(remaining)}</div>
-      <div className="battle__progress">
-        <span className="battle__progress-fill" style={{ width: `${pct}%` }} />
-      </div>
-      <p className="muted performing__hint">
-        They’re recording their verse. You’ll hear every take in the rating round.
-      </p>
-
-      {/* turn tracker */}
+      {/* who's recorded so far */}
       <ul className="turntrack">
-        {room.turnOrder.map((id, i) => {
-          const pl = room.players.find((p) => p.id === id);
-          const done = room.performedIds.includes(id);
-          const active = id === room.currentPerformerId;
+        {room.players.map((p) => {
+          const saved = room.performedIds.includes(p.id);
           return (
-            <li key={id} className={`turntrack__item ${active ? 'is-active' : ''} ${done ? 'is-done' : ''}`}>
-              <span className="turntrack__num">{i + 1}</span>
-              {pl?.handle ?? 'MC'}
-              {done && <span className="turntrack__check">✓</span>}
+            <li key={p.id} className={`turntrack__item ${saved ? 'is-done' : 'is-active'}`}>
+              {p.handle}
+              {saved ? <span className="turntrack__check">✓</span> : <span className="rec-dot rec-dot--sm" />}
             </li>
           );
         })}

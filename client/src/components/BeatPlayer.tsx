@@ -6,6 +6,7 @@ export interface BeatPlayerHandle {
   pause: () => void;
   seekTo: (seconds: number) => void;
   getTime: () => number;
+  setVolume: (v: number) => void;
   ready: () => boolean;
 }
 
@@ -13,13 +14,15 @@ interface Props {
   videoId: string;
   onReady?: () => void;
   className?: string;
+  // 0–100. Use a low value (e.g. 25) to duck the beat under a recorded vocal.
+  volume?: number;
 }
 
 // A directly-controllable YouTube player. Parents drive it imperatively via the
 // ref (play / pause / seek). Used to play the beat while an MC records, and to
 // play the beat underneath a recorded take during rating.
 const BeatPlayer = forwardRef<BeatPlayerHandle, Props>(function BeatPlayer(
-  { videoId, onReady, className = '' },
+  { videoId, onReady, className = '', volume = 100 },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -78,8 +81,15 @@ const BeatPlayer = forwardRef<BeatPlayerHandle, Props>(function BeatPlayer(
     play: () => {
       try {
         playerRef.current?.unMute();
-        playerRef.current?.setVolume(100);
+        playerRef.current?.setVolume(volume);
         playerRef.current?.playVideo();
+      } catch {
+        /* noop */
+      }
+    },
+    setVolume: (v: number) => {
+      try {
+        playerRef.current?.setVolume(Math.max(0, Math.min(100, v)));
       } catch {
         /* noop */
       }

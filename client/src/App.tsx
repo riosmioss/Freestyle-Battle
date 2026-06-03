@@ -26,7 +26,7 @@ export default function App() {
         screen = <Lobby room={room} you={you} actions={actions} mic={mic} />;
         break;
       case 'countdown':
-        screen = <Countdown room={room} you={you} />;
+        screen = <Countdown room={room} />;
         break;
       case 'performing':
         screen = <Performing room={room} you={you} mic={mic} actions={actions} />;

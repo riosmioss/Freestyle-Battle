@@ -212,14 +212,14 @@ io.on('connection', (socket) => {
 });
 
 function handleLeave(socketId: string) {
-  const { room, deleted, wasPerformer } = store.removePlayer(socketId);
+  const { room, deleted } = store.removePlayer(socketId);
   if (deleted || !room) {
     broadcastLobbyList(); // room may be gone; refresh the public list
     return;
   }
   broadcastAll(room);
-  // If the MC who was mid-performance left, move the round along.
-  if (wasPerformer) store.performerLeft(room, roundCb);
+  // A leaver may have been the last MC we were waiting on to finish recording.
+  store.recheckPerforming(room, roundCb);
 }
 
 // Helper: resolve the caller's room and confirm they are the host.

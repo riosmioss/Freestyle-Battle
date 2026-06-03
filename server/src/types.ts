@@ -50,20 +50,17 @@ export interface RoomState {
   players: Player[];
   beats: Beat[];
   activeBeatId: string | null;
-  roundLength: number; // seconds per MC's turn
+  roundLength: number; // seconds everyone records for
   roundNumber: number;
 
-  // ---- Turn-based performance state ----
-  turnOrder: string[]; // player ids, in the order they perform this round
-  currentTurnIndex: number; // -1 when not performing
-  currentPerformerId: string | null;
-  performedIds: string[]; // who has finished + uploaded their take this round
+  // ---- Simultaneous performance state ----
+  performedIds: string[]; // who has uploaded their take this round
 
   // Timing (server epoch milliseconds). Clients convert to their own clock
   // using a measured offset.
-  countdownEndsAt: number | null; // when the current MC's beat drops
-  performStartTimestamp: number | null; // current MC's recording start (t=0)
-  performEndsAt: number | null; // when the current MC's turn ends
+  countdownEndsAt: number | null; // when the beat drops for everyone
+  performStartTimestamp: number | null; // record start (t=0)
+  performEndsAt: number | null; // when the recording window ends
 
   // Rating phase: ids of players who have already submitted their ratings.
   ratingsSubmitted: string[];

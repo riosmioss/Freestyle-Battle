@@ -808,6 +808,7 @@ body {
   box-shadow: 0 0 12px var(--hot);
   animation: flash 1s steps(2) infinite;
 }
+.rec-dot--sm { width: 9px; height: 9px; }
 
 /* Turn tracker */
 .turntrack {

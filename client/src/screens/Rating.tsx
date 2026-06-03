@@ -16,6 +16,33 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const beatRef = useRef<BeatPlayerHandle>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
+  // Mix: duck the beat low and boost the recorded vocal so the rap is clear.
+  const BEAT_VOLUME = 22; // out of 100
+  const VOICE_GAIN = 1.6; // amplify the recorded voice
+  const ctxRef = useRef<AudioContext | null>(null);
+
+  // Route the recording playback through a gain node so we can make it louder
+  // than the (ducked) beat. Set up once on the persistent <audio> element.
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || ctxRef.current) return;
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const src = ctx.createMediaElementSource(el);
+      const gain = ctx.createGain();
+      gain.gain.value = VOICE_GAIN;
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      ctxRef.current = ctx;
+    } catch {
+      /* fall back to the element's own output */
+    }
+    return () => {
+      ctxRef.current?.close().catch(() => {});
+      ctxRef.current = null;
+    };
+  }, [haveTakes]);
+
   // Takes you can rate = everyone's except your own.
   const takes = useMemo(
     () => (haveTakes ? recordings!.recordings.filter((r) => r.performerId !== you) : []),
@@ -55,10 +82,13 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     if (!current) return;
     const audio = audioRef.current;
     if (!audio) return;
+    ctxRef.current?.resume().catch(() => {});
     audio.src = urls[current.performerId];
     audio.currentTime = 0;
+    // Beat plays underneath, ducked low so the rap sits on top.
     beatRef.current?.seekTo(current.beatOffset);
     beatRef.current?.play();
+    beatRef.current?.setVolume(BEAT_VOLUME);
     audio.play().catch(() => {});
     setPlaying(true);
     audio.onended = () => {
@@ -125,7 +155,9 @@ export default function Rating({ room, you, actions, recordings }: Props) {
 
       {/* Hidden beat player + recorded vocal, played together */}
       <div className="rating__stage">
-        {beat && <BeatPlayer ref={beatRef} videoId={beat.videoId} className="beat-player--mini" />}
+        {beat && (
+          <BeatPlayer ref={beatRef} videoId={beat.videoId} className="beat-player--mini" volume={BEAT_VOLUME} />
+        )}
         <audio ref={audioRef} />
       </div>
 

@@ -6,10 +6,10 @@ then everyone listens back to each take (with the beat under it) and scores it
 1–10. A round winner gets crowned and a cumulative leaderboard tracks the whole
 session. You can download every take afterward.
 
-- **Turn-based recorded battles** — MCs go one after another (no talking over
-  each other), each verse captured to an audio take.
-- **Listen-back rating** — play each take with the beat underneath, then score
-  it 1–10. Can't rate yourself.
+- **Everyone records at once** — the beat drops and every MC records their verse
+  simultaneously over a shared timer.
+- **Listen-back rating** — play each take with the beat ducked underneath and the
+  vocal boosted, then score it 1–10. Can't rate yourself.
 - **Download the takes** — grab each MC's vocal recording as a file.
 - **No database** — lobby state lives in memory, keyed by a 4-char room code.
 - **Public or private lobbies** — list a room publicly or keep it code-only.
@@ -85,12 +85,13 @@ cd client && npm install && npm run dev
    labels them, picks the active beat, and sets each MC's turn length
    (30/60/90/120s). Everyone sees the player list with live indicators. Host hits
    **Start the Battle**.
-3. **Turns** — for each MC in order: a 5-second "you're up" countdown, then the
-   beat plays and **that MC raps solo while it records**. The others wait
-   (they'll hear it in the rating round). Then it's the next MC's turn.
+3. **Record** — a 5-second "beat drops in" countdown, then the beat plays and
+   **everyone records their verse at the same time** over one shared timer. When
+   the timer hits zero, each take uploads automatically.
    *(Headphones recommended so the beat doesn't bleed into the recording.)*
-4. **Rating** — listen back to each take one at a time (the beat plays underneath
-   the recorded vocal), then score it 1–10. You can't rate your own take.
+4. **Rating** — listen back to each take one at a time (the beat is ducked low
+   under the boosted vocal so the rap is clear), then score it 1–10. You can't
+   rate your own take.
 5. **Results** — averaged scores, the round winner crowned 👑, a cumulative
    leaderboard, and **download buttons** for every take. The host starts the
    **Next Round** (auto-rotates to the next beat) or heads **Back to Lobby**.

@@ -47,10 +47,7 @@ export interface RoomState {
   roundLength: number;
   roundNumber: number;
 
-  // Turn-based performance
-  turnOrder: string[];
-  currentTurnIndex: number;
-  currentPerformerId: string | null;
+  // Simultaneous performance
   performedIds: string[];
 
   countdownEndsAt: number | null;

@@ -3,24 +3,17 @@ import type { RoomState } from '../types';
 
 interface Props {
   room: RoomState;
-  you: string;
 }
 
-export default function Countdown({ room, you }: Props) {
+export default function Countdown({ room }: Props) {
   const remaining = useCountdown(room.countdownEndsAt);
   const seconds = Math.ceil(remaining / 1000);
   const beat = room.beats.find((b) => b.id === room.activeBeatId);
-  const performer = room.players.find((p) => p.id === room.currentPerformerId);
-  const isYou = room.currentPerformerId === you;
-  const turnNum = room.currentTurnIndex + 1;
-  const total = room.turnOrder.length;
 
   return (
     <div className="countdown">
-      <p className="countdown__turn">
-        TURN {turnNum} / {total}
-      </p>
-      <p className="countdown__label">{isYou ? 'YOU’RE UP — GET READY' : `${performer?.handle ?? 'MC'} IS UP`}</p>
+      <p className="countdown__turn">ROUND {room.roundNumber} · EVERYONE RECORDS</p>
+      <p className="countdown__label">BEAT DROPS IN</p>
       <div className="countdown__num" key={seconds}>
         {seconds > 0 ? seconds : 'GO'}
       </div>
