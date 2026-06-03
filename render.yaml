@@ -1,0 +1,18 @@
+# Render Blueprint — deploys the Freestyle Battle game SERVER.
+# In Render: New + → "Blueprint" → connect this repo → it reads this file and
+# sets everything up automatically. Render injects PORT; the server uses it.
+#
+# After your client is live on Netlify, set CLIENT_ORIGIN to that URL (e.g.
+# https://your-site.netlify.app) for tighter security. "*" works to start.
+services:
+  - type: web
+    name: freestyle-battle-server
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: CLIENT_ORIGIN
+        value: "*"

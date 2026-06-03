@@ -1,0 +1,64 @@
+// Mirror of the server's broadcast types. Keep in sync with server/src/types.ts.
+
+export type Phase = 'lobby' | 'countdown' | 'battle' | 'rating' | 'results';
+
+export interface Player {
+  id: string;
+  handle: string;
+  online: boolean;
+}
+
+export interface Beat {
+  id: string;
+  videoId: string;
+  label: string;
+  addedBy: string;
+}
+
+export interface PlayerRoundScore {
+  playerId: string;
+  handle: string;
+  average: number;
+  votes: number;
+}
+
+export interface RoundResults {
+  roundNumber: number;
+  beatLabel: string;
+  scores: PlayerRoundScore[];
+  winnerId: string | null;
+}
+
+export interface LeaderboardEntry {
+  playerId: string;
+  handle: string;
+  online: boolean;
+  totalPoints: number;
+  roundsWon: number;
+}
+
+export interface RoomState {
+  code: string;
+  hostId: string;
+  phase: Phase;
+  players: Player[];
+  beats: Beat[];
+  activeBeatId: string | null;
+  roundLength: number;
+  roundNumber: number;
+  countdownEndsAt: number | null;
+  roundStartTimestamp: number | null;
+  roundEndsAt: number | null;
+  ratingsSubmitted: string[];
+  results: RoundResults | null;
+  leaderboard: LeaderboardEntry[];
+  isPublic: boolean;
+}
+
+export interface PublicLobby {
+  code: string;
+  hostHandle: string;
+  playerCount: number;
+  phase: Phase;
+  roundNumber: number;
+}

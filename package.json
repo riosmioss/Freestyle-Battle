@@ -1,0 +1,15 @@
+{
+  "name": "freestyle-battle",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time multiplayer freestyle rap battle game (monorepo: /client + /server).",
+  "scripts": {
+    "postinstall": "npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently -n SERVER,CLIENT -c magenta,cyan \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix server && npm run build --prefix client",
+    "start:server": "npm run start --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
