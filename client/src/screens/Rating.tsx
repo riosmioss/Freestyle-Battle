@@ -1,35 +1,99 @@
-import { useMemo, useState } from 'react';
-import type { RoomState } from '../types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import BeatPlayer, { type BeatPlayerHandle } from '../components/BeatPlayer';
+import type { RecordingsPayload, RoomState } from '../types';
 import type { GameActions } from '../useGame';
 
 interface Props {
   room: RoomState;
   you: string;
   actions: GameActions;
+  recordings: RecordingsPayload | null;
 }
 
-export default function Rating({ room, you, actions }: Props) {
-  // Everyone except yourself.
-  const targets = useMemo(() => room.players.filter((p) => p.id !== you), [room.players, you]);
+export default function Rating({ room, you, actions, recordings }: Props) {
+  const haveTakes = recordings && recordings.roundNumber === room.roundNumber;
+  const beat = room.beats.find((b) => b.id === room.activeBeatId);
+  const beatRef = useRef<BeatPlayerHandle>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Takes you can rate = everyone's except your own.
+  const takes = useMemo(
+    () => (haveTakes ? recordings!.recordings.filter((r) => r.performerId !== you) : []),
+    [haveTakes, recordings, you],
+  );
+
+  // Build playable object URLs for each take.
+  const urls = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (haveTakes) {
+      for (const r of recordings!.recordings) {
+        map[r.performerId] = URL.createObjectURL(new Blob([r.data], { type: r.mimeType }));
+      }
+    }
+    return map;
+  }, [haveTakes, recordings]);
+
+  useEffect(() => () => Object.values(urls).forEach((u) => URL.revokeObjectURL(u)), [urls]);
+
+  const [idx, setIdx] = useState(0);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(room.ratingsSubmitted.includes(you));
+  const [playing, setPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const allRated = targets.every((t) => scores[t.id] != null);
+  const current = takes[idx];
+  const allScored = takes.every((t) => scores[t.performerId] != null);
   const waitingOn = room.players.filter((p) => p.online && !room.ratingsSubmitted.includes(p.id));
 
+  const stop = () => {
+    audioRef.current?.pause();
+    beatRef.current?.pause();
+    setPlaying(false);
+  };
+
+  const play = () => {
+    if (!current) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.src = urls[current.performerId];
+    audio.currentTime = 0;
+    beatRef.current?.seekTo(current.beatOffset);
+    beatRef.current?.play();
+    audio.play().catch(() => {});
+    setPlaying(true);
+    audio.onended = () => {
+      beatRef.current?.pause();
+      setPlaying(false);
+    };
+  };
+
   const submit = async () => {
+    stop();
     setBusy(true);
     const res = await actions.submitRating(scores);
     setBusy(false);
     if (res.ok) setSubmitted(true);
   };
 
-  if (targets.length === 0) {
+  // Loading takes from the server.
+  if (!haveTakes) {
     return (
       <div className="rating">
         <h1 className="rating__title">RATE THE BARS</h1>
-        <p className="muted">Need at least two MCs to score a round. Waiting for results…</p>
+        <p className="muted">Loading the takes…</p>
+      </div>
+    );
+  }
+
+  // Nothing to rate (you were the only MC).
+  if (takes.length === 0 && !submitted) {
+    return (
+      <div className="rating">
+        <h1 className="rating__title">RATE THE BARS</h1>
+        <p className="muted">No other takes to score this round. Waiting for results…</p>
+        <button className="btn btn--hot" disabled={busy} onClick={submit}>
+          Continue
+        </button>
       </div>
     );
   }
@@ -55,34 +119,70 @@ export default function Rating({ room, you, actions }: Props) {
   return (
     <div className="rating">
       <h1 className="rating__title">RATE THE BARS</h1>
-      <p className="muted">Score every other MC 1–10. No rating yourself.</p>
+      <p className="muted">
+        Take {idx + 1} of {takes.length} · listen, then score 1–10
+      </p>
 
-      <div className="rating__list">
-        {targets.map((t) => (
-          <div key={t.id} className="ratecard">
-            <span className="ratecard__name">{t.handle}</span>
-            <div className="ratecard__scores">
-              {Array.from({ length: 10 }).map((_, i) => {
-                const val = i + 1;
-                const on = scores[t.id] === val;
-                return (
-                  <button
-                    key={val}
-                    className={`scorebtn ${on ? 'scorebtn--on' : ''}`}
-                    onClick={() => setScores((s) => ({ ...s, [t.id]: val }))}
-                  >
-                    {val}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+      {/* Hidden beat player + recorded vocal, played together */}
+      <div className="rating__stage">
+        {beat && <BeatPlayer ref={beatRef} videoId={beat.videoId} className="beat-player--mini" />}
+        <audio ref={audioRef} />
       </div>
 
-      <button className="btn btn--hot btn--big" disabled={!allRated || busy} onClick={submit}>
-        {allRated ? 'LOCK IN SCORES' : 'Score everyone first'}
-      </button>
+      <div className="ratecard ratecard--solo">
+        <span className="ratecard__name">{current?.handle}</span>
+
+        <button className={`playbtn ${playing ? 'playbtn--on' : ''}`} onClick={playing ? stop : play}>
+          <span className="playbtn__icon">{playing ? '■' : '▶'}</span>
+          {playing ? 'Stop' : 'Play take'}
+        </button>
+
+        <div className="ratecard__scores">
+          {Array.from({ length: 10 }).map((_, i) => {
+            const val = i + 1;
+            const on = current && scores[current.performerId] === val;
+            return (
+              <button
+                key={val}
+                className={`scorebtn ${on ? 'scorebtn--on' : ''}`}
+                onClick={() => current && setScores((s) => ({ ...s, [current.performerId]: val }))}
+              >
+                {val}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rating__nav">
+        {idx > 0 && (
+          <button
+            className="btn btn--ghost"
+            onClick={() => {
+              stop();
+              setIdx((i) => i - 1);
+            }}
+          >
+            ‹ Previous
+          </button>
+        )}
+        {idx < takes.length - 1 ? (
+          <button
+            className="btn btn--hot"
+            disabled={current ? scores[current.performerId] == null : true}
+            onClick={() => {
+              stop();
+              setIdx((i) => i + 1);
+            }}
+          >
+            Next take ›
+          </button>
+        ) : (
+          <button className="btn btn--hot btn--big" disabled={!allScored || busy} onClick={submit}>
+            {allScored ? 'LOCK IN SCORES' : 'Score this take'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

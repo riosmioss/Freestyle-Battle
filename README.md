@@ -1,14 +1,18 @@
 # 🎤 FREESTYLE BATTLE
 
-A real-time multiplayer web game. Friends join an online lobby, **the same beat
-drops in sync for everyone**, each player freestyle-raps over it on a live mic,
-and afterward everyone rates each other 1–10. A round winner gets crowned and a
-cumulative leaderboard tracks the whole session.
+A real-time multiplayer web game. Friends join an online lobby and battle
+**turn by turn**: the beat plays, each MC raps their verse solo while it records,
+then everyone listens back to each take (with the beat under it) and scores it
+1–10. A round winner gets crowned and a cumulative leaderboard tracks the whole
+session. You can download every take afterward.
 
-- **Same beat, perfectly synced** across every player (server-authoritative
-  timestamp + drift correction).
-- **Live voice** over WebRTC mesh — you hear everyone rap in real time.
+- **Turn-based recorded battles** — MCs go one after another (no talking over
+  each other), each verse captured to an audio take.
+- **Listen-back rating** — play each take with the beat underneath, then score
+  it 1–10. Can't rate yourself.
+- **Download the takes** — grab each MC's vocal recording as a file.
 - **No database** — lobby state lives in memory, keyed by a 4-char room code.
+- **Public or private lobbies** — list a room publicly or keep it code-only.
 - Dark, gritty battle-rap stage aesthetic.
 
 ---
@@ -78,37 +82,39 @@ cd client && npm install && npm run dev
    code-only. The 4-char code always works for either. The host can flip a lobby
    between public/private at any time from the lobby.
 2. **Lobby** — the host pastes YouTube beat links (any normal YouTube URL works),
-   labels them, picks the active beat, and sets the round length (30/60/90/120s).
-   Everyone sees the player list with live indicators. Host hits **Start the
-   Battle**.
-3. **Countdown** — a synced 5-second "BEAT DROPS IN…" countdown for everyone.
-4. **Battle** — the beat plays **in sync** for all players, a big timer counts
-   down, and everyone's mic is live so you hear each other freestyle.
-5. **Rating** — when the timer ends, score every *other* player 1–10 (you can't
-   rate yourself).
-6. **Results** — averaged scores, the round winner crowned 👑, and a cumulative
-   leaderboard. The host starts the **Next Round** (auto-rotates to the next beat)
-   or heads **Back to Lobby**.
+   labels them, picks the active beat, and sets each MC's turn length
+   (30/60/90/120s). Everyone sees the player list with live indicators. Host hits
+   **Start the Battle**.
+3. **Turns** — for each MC in order: a 5-second "you're up" countdown, then the
+   beat plays and **that MC raps solo while it records**. The others wait
+   (they'll hear it in the rating round). Then it's the next MC's turn.
+   *(Headphones recommended so the beat doesn't bleed into the recording.)*
+4. **Rating** — listen back to each take one at a time (the beat plays underneath
+   the recorded vocal), then score it 1–10. You can't rate your own take.
+5. **Results** — averaged scores, the round winner crowned 👑, a cumulative
+   leaderboard, and **download buttons** for every take. The host starts the
+   **Next Round** (auto-rotates to the next beat) or heads **Back to Lobby**.
 
 The **host** runs the room. If the host leaves, host automatically migrates to the
 next player. If everyone leaves, the room is discarded.
 
 ---
 
-## Microphone & HTTPS (important for voice)
+## Microphone & HTTPS (important for recording)
 
 Browsers only allow microphone access on **`localhost` or over HTTPS**.
 
-- Testing on the same machine via `localhost` → mic works.
-- For friends to join from **other devices with working voice**, you need to
-  **deploy** (the deployed client will be HTTPS). Opening the app over a plain
+- Testing on the same machine via `localhost` → mic works (click **Allow** when
+  prompted).
+- For friends to join from **other devices and record**, you need to **deploy**
+  (the deployed client will be HTTPS). Opening the app over a plain
   `http://<your-lan-ip>` address on another device will block the mic.
 
-If the mic is blocked or unavailable, the game still works fully — the voice bar
-just shows a notice, and players can hop on a separate call (Discord, etc.).
+If the mic is blocked or unavailable, the game still runs — that player just
+can't record a take that round.
 
-YouTube also blocks autoplay-with-sound without a user gesture; if a client's beat
-doesn't start, a **"TAP TO DROP THE BEAT"** button appears — tap it once.
+YouTube also blocks autoplay-with-sound without a user gesture; if the beat
+doesn't start on your turn, a **"Tap to start it"** button is right there.
 
 ---
 
@@ -177,38 +183,37 @@ The **server is the single source of truth** for lobby state, phase, the active
 beat, and round timing. Clients react to server broadcasts — they never drive the
 phase themselves.
 
-**Phases:** `lobby → countdown → battle → rating → results → (loop)`
+**Phases:** `lobby → countdown → performing → (repeat per MC) → rating → results → (loop)`
 
-### Beat sync
+### Turn engine & recording
 
-On `startBattle` the server picks one authoritative `roundStartTimestamp` (the
-moment the beat drops) and broadcasts it. Each client:
-
-1. measures its clock offset vs. the server (a small NTP-style ping), then
-2. seeks its YouTube player to `(serverNow − roundStartTimestamp)` and
-3. self-corrects whenever drift exceeds ~1.5s.
-
-So everyone hears the same instant of the beat, not just "play on cue."
+On `startBattle` the server builds a `turnOrder` of the online players and runs
+each MC's turn back-to-back: a 5s countdown, then a `performing` window of
+`roundLength` seconds. The performing client records its mic with
+`MediaRecorder`, plays the beat so the MC can rap to it, and on time-up uploads
+the take (binary audio + the beat offset where the vocal began) via
+`submitRecording`. The server stores takes in memory for the round and ships
+them to everyone (`recordings`) when the rating phase begins. During rating each
+client plays a take's vocal alongside the YouTube beat (seeked to that offset),
+so it sounds like the full performance. Downloads are the **vocal take only** —
+YouTube audio can't be bundled into a saved file.
 
 ### Socket.IO events
 
 **Client → Server:** `createLobby` (with `isPublic`), `joinLobby`, `addBeat`,
 `removeBeat`, `selectBeat`, `setRoundLength`, `setPublic`, `startBattle`,
-`submitRating`, `nextRound`, `returnToLobby`, `leaveLobby`, `timesync`,
-`watchLobbies` / `unwatchLobbies` (subscribe to the public lobby list)
-WebRTC signaling: `rtcOffer`, `rtcAnswer`, `rtcIce`
+`submitRecording`, `submitRating`, `nextRound`, `returnToLobby`, `leaveLobby`,
+`timesync`, `watchLobbies` / `unwatchLobbies` (subscribe to the public list)
 
 **Server → Client:** `roomState` (the full authoritative snapshot — drives every
-screen), `publicLobbies` (the live browsable list), `peerJoined`, `peerLeft`
-WebRTC signaling relay: `rtcOffer`, `rtcAnswer`, `rtcIce`
+screen), `recordings` (the round's recorded takes, sent at rating),
+`publicLobbies` (the live browsable list)
 
-### Voice (WebRTC mesh)
+### Microphone
 
-On entering a lobby the client requests the mic and opens a peer connection to
-every other player (full mesh; fine for ≤8 players). It uses the "perfect
-negotiation" pattern so any pair connects without glare, with Socket.IO relaying
-SDP/ICE. Each player can mute/unmute, and an audio-level meter shows who's
-currently talking. Beat audio (YouTube) is completely separate from voice.
+The mic is acquired once you're in a room and reused by the recorder on your
+turn. It needs `localhost` or HTTPS (see below). If the mic is blocked the game
+still runs — you just can't record a take that round.
 
 ---
 

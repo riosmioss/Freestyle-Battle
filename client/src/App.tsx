@@ -1,21 +1,19 @@
-import { useMemo } from 'react';
 import Grain from './components/Grain';
-import VoiceBar from './components/VoiceBar';
-import Battle from './screens/Battle';
+import MicBar from './components/MicBar';
 import Countdown from './screens/Countdown';
 import Home from './screens/Home';
 import Lobby from './screens/Lobby';
+import Performing from './screens/Performing';
 import Rating from './screens/Rating';
 import Results from './screens/Results';
 import { useGame } from './useGame';
-import { useVoice } from './useVoice';
+import { useMic } from './useMic';
 
 export default function App() {
-  const { connected, room, you, error, publicLobbies, actions } = useGame();
+  const { connected, room, you, error, publicLobbies, recordings, actions } = useGame();
 
-  // Voice lives at the app level so the mic + peer mesh persist across phases.
-  const players = useMemo(() => room?.players ?? [], [room]);
-  const voice = useVoice(!!room, players, you);
+  // We only need the mic to record your turn — acquired once you're in a room.
+  const mic = useMic(!!room);
 
   let screen: React.ReactNode;
   if (!room) {
@@ -25,22 +23,22 @@ export default function App() {
   } else {
     switch (room.phase) {
       case 'lobby':
-        screen = <Lobby room={room} you={you} actions={actions} levels={voice.levels} />;
+        screen = <Lobby room={room} you={you} actions={actions} />;
         break;
       case 'countdown':
-        screen = <Countdown room={room} />;
+        screen = <Countdown room={room} you={you} />;
         break;
-      case 'battle':
-        screen = <Battle room={room} you={you} levels={voice.levels} />;
+      case 'performing':
+        screen = <Performing room={room} you={you} mic={mic} actions={actions} />;
         break;
       case 'rating':
-        screen = <Rating room={room} you={you} actions={actions} />;
+        screen = <Rating room={room} you={you} actions={actions} recordings={recordings} />;
         break;
       case 'results':
-        screen = <Results room={room} you={you} actions={actions} />;
+        screen = <Results room={room} you={you} actions={actions} recordings={recordings} />;
         break;
       default:
-        screen = <Lobby room={room} you={you} actions={actions} levels={voice.levels} />;
+        screen = <Lobby room={room} you={you} actions={actions} />;
     }
   }
 
@@ -49,7 +47,7 @@ export default function App() {
       <Grain />
       {!connected && room && <div className="reconnect-banner">Reconnecting to the stage…</div>}
       <div className="app__inner">{screen}</div>
-      {room && <VoiceBar voice={voice} />}
+      {room && <MicBar mic={mic} />}
     </div>
   );
 }

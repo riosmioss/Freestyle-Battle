@@ -2,7 +2,7 @@ import http from 'node:http';
 import cors from 'cors';
 import express from 'express';
 import { Server } from 'socket.io';
-import { Store, type Room } from './store.js';
+import { Store, type Room, type RoundCallbacks } from './store.js';
 import { parseYouTubeId } from './youtube.js';
 import type {
   Ack,
@@ -10,11 +10,11 @@ import type {
   CreateLobbyPayload,
   JoinLobbyPayload,
   RemoveBeatPayload,
-  RtcSignalPayload,
   SelectBeatPayload,
   SetPublicPayload,
   SetRoundLengthPayload,
   SubmitRatingPayload,
+  SubmitRecordingPayload,
 } from './types.js';
 
 // Socket.IO room that home-screen clients join to receive the live public
@@ -33,6 +33,8 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: CLIENT_ORIGIN, methods: ['GET', 'POST'] },
+  // Recorded takes are sent as binary; allow generous payloads (up to ~120s clips).
+  maxHttpBufferSize: 15_000_000,
 });
 
 const store = new Store();
@@ -47,17 +49,26 @@ function broadcastLobbyList() {
   io.to(HOME_ROOM).emit('publicLobbies', store.publicLobbies());
 }
 
-// Combined: a game room changed AND the public list may have too (player count
-// or phase). Used for phase transitions and roster changes.
+// A game room changed AND the public list may have too (player count / phase).
 function broadcastAll(room: Room) {
   broadcast(room);
   broadcastLobbyList();
 }
 
+// Ship the round's recorded takes (binary audio) to everyone in the room.
+function sendRecordings(room: Room) {
+  io.to(room.code).emit('recordings', {
+    roundNumber: room.roundNumber,
+    recordings: store.roundRecordings(room),
+  });
+}
+
+// Callbacks the round engine uses to push updates out.
+const roundCb: RoundCallbacks = { broadcast: broadcastAll, recordings: sendRecordings };
+
 io.on('connection', (socket) => {
-  // Lightweight clock-sync endpoint. Client measures RTT and derives the
-  // offset between its clock and the server's so synced timestamps line up.
-  socket.on('timesync', (clientSent: number, ack: (serverTime: number) => void) => {
+  // Lightweight clock-sync endpoint (client measures RTT to align timestamps).
+  socket.on('timesync', (_clientSent: number, ack: (serverTime: number) => void) => {
     if (typeof ack === 'function') ack(Date.now());
   });
 
@@ -66,14 +77,12 @@ io.on('connection', (socket) => {
     socket.join(HOME_ROOM);
     socket.emit('publicLobbies', store.publicLobbies());
   });
-  socket.on('unwatchLobbies', () => {
-    socket.leave(HOME_ROOM);
-  });
+  socket.on('unwatchLobbies', () => socket.leave(HOME_ROOM));
 
   socket.on('createLobby', (payload: CreateLobbyPayload, ack: Ack<{ code: string; you: string }>) => {
     const room = store.createRoom(socket.id, payload?.handle ?? '', !!payload?.isPublic);
     socket.join(room.code);
-    socket.leave(HOME_ROOM); // they're in a game now, stop browsing
+    socket.leave(HOME_ROOM);
     ack?.({ ok: true, code: room.code, you: socket.id });
     broadcastAll(room);
   });
@@ -97,8 +106,6 @@ io.on('connection', (socket) => {
     socket.leave(HOME_ROOM);
     ack?.({ ok: true, code: room.code, you: socket.id });
     broadcastAll(room);
-    // Tell existing peers so WebRTC mesh can connect to the newcomer.
-    socket.to(room.code).emit('peerJoined', { id: socket.id });
   });
 
   // ---- Host: beat & round configuration ----
@@ -147,7 +154,29 @@ io.on('connection', (socket) => {
   socket.on('startBattle', (_payload: unknown, ack: Ack) => {
     const room = requireHost(socket.id, ack);
     if (!room) return;
-    const { error } = store.startBattle(room, broadcastAll);
+    const { error } = store.startBattle(room, roundCb);
+    ack?.(error ? { ok: false, error } : { ok: true });
+  });
+
+  // The current performer uploads their recorded take (binary audio).
+  socket.on('submitRecording', (payload: SubmitRecordingPayload, ack: Ack) => {
+    const room = store.getRoomBySocket(socket.id);
+    if (!room) {
+      ack?.({ ok: false, error: 'You are not in a room.' });
+      return;
+    }
+    const raw = payload?.data as ArrayBuffer | Buffer | undefined;
+    if (!raw) {
+      ack?.({ ok: false, error: 'No audio received.' });
+      return;
+    }
+    const data = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
+    const rec = {
+      beatOffset: Number(payload?.beatOffset) || 0,
+      mimeType: String(payload?.mimeType || 'audio/webm'),
+      data,
+    };
+    const { error } = store.submitRecording(room, socket.id, rec, roundCb);
     ack?.(error ? { ok: false, error } : { ok: true });
   });
 
@@ -157,17 +186,15 @@ io.on('connection', (socket) => {
       ack?.({ ok: false, error: 'You are not in a room.' });
       return;
     }
-    const { error } = store.submitRating(room, socket.id, payload?.ratings ?? {}, broadcastAll);
+    const { error } = store.submitRating(room, socket.id, payload?.ratings ?? {}, roundCb);
     ack?.(error ? { ok: false, error } : { ok: true });
   });
 
   socket.on('nextRound', (_payload: unknown, ack: Ack) => {
     const room = requireHost(socket.id, ack);
     if (!room) return;
-    // Rotate to the next beat in the crate so each round gets a fresh one
-    // (wraps around if at the end). Host can still hand-pick from the lobby.
-    store.rotateActiveBeat(room);
-    const { error } = store.startBattle(room, broadcastAll);
+    store.rotateActiveBeat(room); // fresh beat each round (wraps around)
+    const { error } = store.startBattle(room, roundCb);
     ack?.(error ? { ok: false, error } : { ok: true });
   });
 
@@ -179,33 +206,20 @@ io.on('connection', (socket) => {
     ack?.({ ok: true });
   });
 
-  // ---- WebRTC signaling relay (Phase 2) ----
-  socket.on('rtcOffer', (p: RtcSignalPayload) => relaySignal(socket.id, 'rtcOffer', p));
-  socket.on('rtcAnswer', (p: RtcSignalPayload) => relaySignal(socket.id, 'rtcAnswer', p));
-  socket.on('rtcIce', (p: RtcSignalPayload) => relaySignal(socket.id, 'rtcIce', p));
-
   // ---- Disconnect / leave ----
   socket.on('leaveLobby', () => handleLeave(socket.id));
   socket.on('disconnect', () => handleLeave(socket.id));
 });
 
-function relaySignal(from: string, event: string, payload: RtcSignalPayload) {
-  if (!payload?.to) return;
-  io.to(payload.to).emit(event, { ...payload, from });
-}
-
 function handleLeave(socketId: string) {
-  const roomBefore = store.getRoomBySocket(socketId);
-  const code = roomBefore?.code;
-  const { room, deleted } = store.removePlayer(socketId);
+  const { room, deleted, wasPerformer } = store.removePlayer(socketId);
   if (deleted || !room) {
-    // Room may have been destroyed — refresh the public list either way.
-    broadcastLobbyList();
+    broadcastLobbyList(); // room may be gone; refresh the public list
     return;
   }
-  // Let peers tear down their WebRTC connection to the departed player.
-  if (code) io.to(code).emit('peerLeft', { id: socketId });
   broadcastAll(room);
+  // If the MC who was mid-performance left, move the round along.
+  if (wasPerformer) store.performerLeft(room, roundCb);
 }
 
 // Helper: resolve the caller's room and confirm they are the host.

@@ -2,18 +2,16 @@ import { useState } from 'react';
 import Equalizer from '../components/Equalizer';
 import type { RoomState } from '../types';
 import type { GameActions } from '../useGame';
-import { isTalking } from '../useVoice';
 
 interface Props {
   room: RoomState;
   you: string;
   actions: GameActions;
-  levels: Record<string, number>;
 }
 
 const ROUND_LENGTHS = [30, 60, 90, 120];
 
-export default function Lobby({ room, you, actions, levels }: Props) {
+export default function Lobby({ room, you, actions }: Props) {
   const isHost = room.hostId === you;
   const [url, setUrl] = useState('');
   const [label, setLabel] = useState('');
@@ -74,7 +72,7 @@ export default function Lobby({ room, you, actions, levels }: Props) {
           <h2 className="panel__title">On the Stage · {room.players.length}/8</h2>
           <ul className="players">
             {room.players.map((p) => (
-              <li key={p.id} className={`player ${isTalking(levels[p.id]) ? 'player--talking' : ''}`}>
+              <li key={p.id} className="player">
                 <span className={`dot ${p.online ? 'dot--live' : 'dot--off'}`} />
                 <span className="player__name">{p.handle}</span>
                 {p.id === room.hostId && <span className="badge badge--host">HOST</span>}

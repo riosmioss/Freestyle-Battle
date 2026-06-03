@@ -1,6 +1,6 @@
 // Mirror of the server's broadcast types. Keep in sync with server/src/types.ts.
 
-export type Phase = 'lobby' | 'countdown' | 'battle' | 'rating' | 'results';
+export type Phase = 'lobby' | 'countdown' | 'performing' | 'rating' | 'results';
 
 export interface Player {
   id: string;
@@ -46,13 +46,35 @@ export interface RoomState {
   activeBeatId: string | null;
   roundLength: number;
   roundNumber: number;
+
+  // Turn-based performance
+  turnOrder: string[];
+  currentTurnIndex: number;
+  currentPerformerId: string | null;
+  performedIds: string[];
+
   countdownEndsAt: number | null;
-  roundStartTimestamp: number | null;
-  roundEndsAt: number | null;
+  performStartTimestamp: number | null;
+  performEndsAt: number | null;
+
   ratingsSubmitted: string[];
   results: RoundResults | null;
   leaderboard: LeaderboardEntry[];
   isPublic: boolean;
+}
+
+// A recorded take received from the server during the rating phase.
+export interface RecordingMeta {
+  performerId: string;
+  handle: string;
+  beatOffset: number;
+  mimeType: string;
+  data: ArrayBuffer;
+}
+
+export interface RecordingsPayload {
+  roundNumber: number;
+  recordings: RecordingMeta[];
 }
 
 export interface PublicLobby {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { socket } from './socket';
-import type { PublicLobby, RoomState } from './types';
+import type { PublicLobby, RecordingsPayload, RoomState } from './types';
 
 interface Ack {
   ok: boolean;
@@ -17,6 +17,7 @@ export function useGame() {
   const [you, setYou] = useState<string>(socket.id ?? '');
   const [error, setError] = useState<string | null>(null);
   const [publicLobbies, setPublicLobbies] = useState<PublicLobby[]>([]);
+  const [recordings, setRecordings] = useState<RecordingsPayload | null>(null);
   // Track the room code we belong to so a phase change can't be confused.
   const codeRef = useRef<string | null>(null);
 
@@ -31,17 +32,20 @@ export function useGame() {
       setRoom(state);
     };
     const onPublicLobbies = (list: PublicLobby[]) => setPublicLobbies(list);
+    const onRecordings = (payload: RecordingsPayload) => setRecordings(payload);
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('roomState', onRoomState);
     socket.on('publicLobbies', onPublicLobbies);
+    socket.on('recordings', onRecordings);
 
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('roomState', onRoomState);
       socket.off('publicLobbies', onPublicLobbies);
+      socket.off('recordings', onRecordings);
     };
   }, []);
 
@@ -87,6 +91,11 @@ export function useGame() {
   const setRoundLength = useCallback((seconds: number) => emitAck('setRoundLength', { seconds }), [emitAck]);
   const setPublic = useCallback((isPublic: boolean) => emitAck('setPublic', { isPublic }), [emitAck]);
   const startBattle = useCallback(() => emitAck('startBattle', {}), [emitAck]);
+  const submitRecording = useCallback(
+    (beatOffset: number, mimeType: string, data: ArrayBuffer) =>
+      emitAck('submitRecording', { beatOffset, mimeType, data }),
+    [emitAck],
+  );
   const submitRating = useCallback(
     (ratings: Record<string, number>) => emitAck('submitRating', { ratings }),
     [emitAck],
@@ -105,6 +114,7 @@ export function useGame() {
     you,
     error,
     publicLobbies,
+    recordings,
     clearError: () => setError(null),
     actions: {
       createLobby,
@@ -115,6 +125,7 @@ export function useGame() {
       setRoundLength,
       setPublic,
       startBattle,
+      submitRecording,
       submitRating,
       nextRound,
       returnToLobby,

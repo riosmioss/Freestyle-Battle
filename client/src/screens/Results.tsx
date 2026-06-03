@@ -1,16 +1,41 @@
+import { useEffect, useMemo } from 'react';
 import Equalizer from '../components/Equalizer';
-import type { RoomState } from '../types';
+import type { RecordingsPayload, RoomState } from '../types';
 import type { GameActions } from '../useGame';
 
 interface Props {
   room: RoomState;
   you: string;
   actions: GameActions;
+  recordings: RecordingsPayload | null;
 }
 
-export default function Results({ room, you, actions }: Props) {
+function extFor(mime: string): string {
+  if (mime.includes('mp4')) return 'm4a';
+  if (mime.includes('ogg')) return 'ogg';
+  return 'webm';
+}
+
+export default function Results({ room, you, actions, recordings }: Props) {
   const isHost = room.hostId === you;
   const results = room.results;
+
+  // Downloadable vocal takes for this round.
+  const haveTakes = recordings && recordings.roundNumber === room.roundNumber;
+  const downloads = useMemo(() => {
+    const map: Record<string, { url: string; filename: string }> = {};
+    if (haveTakes) {
+      for (const r of recordings!.recordings) {
+        const url = URL.createObjectURL(new Blob([r.data], { type: r.mimeType }));
+        const safe = r.handle.replace(/[^a-z0-9]+/gi, '_');
+        map[r.performerId] = { url, filename: `${safe}_round${recordings!.roundNumber}.${extFor(r.mimeType)}` };
+      }
+    }
+    return map;
+  }, [haveTakes, recordings, room.roundNumber]);
+
+  useEffect(() => () => Object.values(downloads).forEach((d) => URL.revokeObjectURL(d.url)), [downloads]);
+
   if (!results) return null;
 
   const winner = results.scores.find((s) => s.playerId === results.winnerId);
@@ -47,6 +72,24 @@ export default function Results({ room, you, actions }: Props) {
           ))}
         </ol>
       </section>
+
+      {/* Download the recorded takes */}
+      {haveTakes && recordings!.recordings.length > 0 && (
+        <section className="panel">
+          <h2 className="panel__title">Save the Takes</h2>
+          <p className="muted">Vocal recordings from this round (the beat isn’t baked in).</p>
+          <ul className="takes">
+            {recordings!.recordings.map((r) => (
+              <li key={r.performerId} className="takerow">
+                <span className="takerow__name">{r.handle}</span>
+                <a className="btn btn--ghost btn--sm" href={downloads[r.performerId]?.url} download={downloads[r.performerId]?.filename}>
+                  ⬇ Download
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Cumulative leaderboard */}
       <section className="panel">

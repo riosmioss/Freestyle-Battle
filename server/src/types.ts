@@ -1,6 +1,9 @@
 // Shared game types. The server is the single source of truth for all of this.
 
-export type Phase = 'lobby' | 'countdown' | 'battle' | 'rating' | 'results';
+// Turn-based recorded battle:
+//   lobby -> countdown -> performing (one MC records) -> ...repeat per MC...
+//   -> rating (play back each take + score) -> results -> (loop)
+export type Phase = 'lobby' | 'countdown' | 'performing' | 'rating' | 'results';
 
 export interface Player {
   id: string; // socket id
@@ -47,14 +50,20 @@ export interface RoomState {
   players: Player[];
   beats: Beat[];
   activeBeatId: string | null;
-  roundLength: number; // seconds
+  roundLength: number; // seconds per MC's turn
   roundNumber: number;
 
+  // ---- Turn-based performance state ----
+  turnOrder: string[]; // player ids, in the order they perform this round
+  currentTurnIndex: number; // -1 when not performing
+  currentPerformerId: string | null;
+  performedIds: string[]; // who has finished + uploaded their take this round
+
   // Timing (server epoch milliseconds). Clients convert to their own clock
-  // using a measured offset, then sync/seek YouTube to match.
-  countdownEndsAt: number | null; // == the moment the beat drops
-  roundStartTimestamp: number | null; // beat drop moment (battle t=0)
-  roundEndsAt: number | null;
+  // using a measured offset.
+  countdownEndsAt: number | null; // when the current MC's beat drops
+  performStartTimestamp: number | null; // current MC's recording start (t=0)
+  performEndsAt: number | null; // when the current MC's turn ends
 
   // Rating phase: ids of players who have already submitted their ratings.
   ratingsSubmitted: string[];
@@ -71,6 +80,15 @@ export interface PublicLobby {
   playerCount: number;
   phase: Phase;
   roundNumber: number;
+}
+
+// A recorded take, distributed to all clients when rating starts.
+export interface RecordingMeta {
+  performerId: string;
+  handle: string;
+  beatOffset: number; // seconds into the beat where the vocal begins
+  mimeType: string; // e.g. audio/webm;codecs=opus
+  data: ArrayBuffer | Buffer; // the audio blob bytes
 }
 
 // ---- Client -> Server payloads ----
@@ -98,17 +116,14 @@ export interface RemoveBeatPayload {
 export interface SetRoundLengthPayload {
   seconds: number;
 }
+export interface SubmitRecordingPayload {
+  beatOffset: number;
+  mimeType: string;
+  data: ArrayBuffer; // binary audio (Socket.IO handles binary natively)
+}
 export interface SubmitRatingPayload {
   // map of targetPlayerId -> score (1..10)
   ratings: Record<string, number>;
-}
-
-// ---- WebRTC signaling relay payloads ----
-export interface RtcSignalPayload {
-  to: string; // target player id
-  from?: string; // filled in by server
-  description?: any; // RTCSessionDescriptionInit
-  candidate?: any; // RTCIceCandidateInit
 }
 
 export type Ack<T = unknown> = (response: { ok: boolean; error?: string } & Partial<T>) => void;

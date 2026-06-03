@@ -6,11 +6,13 @@ import type {
   Player,
   PlayerRoundScore,
   PublicLobby,
+  RecordingMeta,
   RoomState,
   RoundResults,
 } from './types.js';
 
-const COUNTDOWN_MS = 5000;
+const COUNTDOWN_MS = 5000; // "beat drops in 5..." before each MC's turn
+const UPLOAD_GRACE_MS = 12000; // extra time after a turn for the upload to land
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 
 function makeCode(taken: Set<string>): string {
@@ -19,11 +21,21 @@ function makeCode(taken: Set<string>): string {
     for (let i = 0; i < 4; i++) code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
     if (!taken.has(code)) return code;
   }
-  // Fallback — astronomically unlikely.
   return nanoid(4).toUpperCase();
 }
 
-// Internal room model (richer than the broadcast snapshot).
+interface StoredRecording {
+  beatOffset: number;
+  mimeType: string;
+  data: Buffer;
+}
+
+// Callbacks the store uses to push updates out (kept transport-agnostic).
+export interface RoundCallbacks {
+  broadcast: (room: Room) => void; // re-send roomState
+  recordings: (room: Room) => void; // ship the recorded takes to clients
+}
+
 interface Room {
   code: string;
   hostId: string;
@@ -35,31 +47,32 @@ interface Room {
   roundLength: number;
   roundNumber: number;
 
+  // turn-based performance
+  turnOrder: string[];
+  currentTurnIndex: number;
+  currentPerformerId: string | null;
   countdownEndsAt: number | null;
-  roundStartTimestamp: number | null;
-  roundEndsAt: number | null;
+  performStartTimestamp: number | null;
+  performEndsAt: number | null;
+  recordings: Map<string, StoredRecording>;
 
   // raterId -> (targetId -> score)
   ratings: Map<string, Map<string, number>>;
-
   results: RoundResults | null;
 
   // cumulative across rounds, keyed by player id (survives if player leaves)
   totals: Map<string, { handle: string; totalPoints: number; roundsWon: number }>;
 
-  // timers we may need to cancel
   timers: NodeJS.Timeout[];
 }
 
 export class Store {
   private rooms = new Map<string, Room>();
-  // socket id -> room code, so we can find a player's room on disconnect
   private socketRoom = new Map<string, string>();
 
   getRoomByCode(code: string): Room | undefined {
     return this.rooms.get(code.toUpperCase());
   }
-
   getRoomBySocket(socketId: string): Room | undefined {
     const code = this.socketRoom.get(socketId);
     return code ? this.rooms.get(code) : undefined;
@@ -77,9 +90,13 @@ export class Store {
       activeBeatId: null,
       roundLength: 60,
       roundNumber: 0,
+      turnOrder: [],
+      currentTurnIndex: -1,
+      currentPerformerId: null,
       countdownEndsAt: null,
-      roundStartTimestamp: null,
-      roundEndsAt: null,
+      performStartTimestamp: null,
+      performEndsAt: null,
+      recordings: new Map(),
       ratings: new Map(),
       results: null,
       totals: new Map(),
@@ -102,28 +119,24 @@ export class Store {
     return { room };
   }
 
-  // Returns the affected room (if any) and whether the room was deleted.
-  removePlayer(socketId: string): { room?: Room; deleted: boolean } {
+  removePlayer(socketId: string): { room?: Room; deleted: boolean; wasPerformer: boolean } {
     const room = this.getRoomBySocket(socketId);
     this.socketRoom.delete(socketId);
-    if (!room) return { deleted: false };
+    if (!room) return { deleted: false, wasPerformer: false };
 
+    const wasPerformer = room.currentPerformerId === socketId;
     room.players.delete(socketId);
-    // Keep their accumulated ratings out of future tallies.
     room.ratings.delete(socketId);
 
     if (room.players.size === 0) {
       this.destroyRoom(room);
-      return { deleted: true };
+      return { deleted: true, wasPerformer };
     }
-
-    // Host migration: hand off to the next player still present.
     if (room.hostId === socketId) {
       const next = room.players.keys().next().value as string | undefined;
       if (next) room.hostId = next;
     }
-
-    return { room, deleted: false };
+    return { room, deleted: false, wasPerformer };
   }
 
   private destroyRoom(room: Room) {
@@ -132,11 +145,29 @@ export class Store {
     this.rooms.delete(room.code);
   }
 
+  addBeat(room: Room, videoId: string, label: string, addedBy: string): Beat {
+    const beat: Beat = { id: nanoid(8), videoId, label, addedBy };
+    room.beats.push(beat);
+    if (!room.activeBeatId) room.activeBeatId = beat.id;
+    return beat;
+  }
+
+  rotateActiveBeat(room: Room) {
+    if (room.beats.length <= 1) return;
+    const idx = room.beats.findIndex((b) => b.id === room.activeBeatId);
+    const next = room.beats[(idx + 1) % room.beats.length];
+    room.activeBeatId = next.id;
+  }
+
+  removeBeat(room: Room, beatId: string) {
+    room.beats = room.beats.filter((b) => b.id !== beatId);
+    if (room.activeBeatId === beatId) room.activeBeatId = room.beats[0]?.id ?? null;
+  }
+
   setPublic(room: Room, isPublic: boolean) {
     room.isPublic = isPublic;
   }
 
-  // The browsable list of joinable public lobbies for the home screen.
   publicLobbies(): PublicLobby[] {
     const list: PublicLobby[] = [];
     for (const room of this.rooms.values()) {
@@ -150,7 +181,6 @@ export class Store {
         roundNumber: room.roundNumber,
       });
     }
-    // Lobbies waiting for players first, then by fullest.
     list.sort((a, b) => {
       if (a.phase === 'lobby' && b.phase !== 'lobby') return -1;
       if (b.phase === 'lobby' && a.phase !== 'lobby') return 1;
@@ -159,77 +189,112 @@ export class Store {
     return list;
   }
 
-  addBeat(room: Room, videoId: string, label: string, addedBy: string): Beat {
-    const beat: Beat = { id: nanoid(8), videoId, label, addedBy };
-    room.beats.push(beat);
-    if (!room.activeBeatId) room.activeBeatId = beat.id;
-    return beat;
-  }
+  // ---- Round / turn engine ----
 
-  // Advance the active beat to the next one in the crate, wrapping around.
-  rotateActiveBeat(room: Room) {
-    if (room.beats.length <= 1) return;
-    const idx = room.beats.findIndex((b) => b.id === room.activeBeatId);
-    const next = room.beats[(idx + 1) % room.beats.length];
-    room.activeBeatId = next.id;
-  }
-
-  removeBeat(room: Room, beatId: string) {
-    room.beats = room.beats.filter((b) => b.id !== beatId);
-    if (room.activeBeatId === beatId) {
-      room.activeBeatId = room.beats[0]?.id ?? null;
-    }
-  }
-
-  // ---- Phase transitions (server-authoritative) ----
-
-  // Begins the synced countdown. `onPhase` is called whenever the room should
-  // be re-broadcast (countdown -> battle -> rating).
-  startBattle(room: Room, onPhase: (room: Room) => void): { error?: string } {
+  startBattle(room: Room, cb: RoundCallbacks): { error?: string } {
     if (room.phase !== 'lobby' && room.phase !== 'results') {
       return { error: 'Battle already in progress.' };
     }
     if (!room.activeBeatId) return { error: 'Pick a beat first.' };
 
+    const order = [...room.players.values()].filter((p) => p.online).map((p) => p.id);
+    if (order.length === 0) return { error: 'No MCs to perform.' };
+
     room.timers.forEach(clearTimeout);
     room.timers = [];
-
-    const now = Date.now();
-    room.phase = 'countdown';
     room.roundNumber += 1;
+    room.turnOrder = order;
+    room.recordings = new Map();
     room.ratings = new Map();
     room.results = null;
-    room.countdownEndsAt = now + COUNTDOWN_MS;
-    room.roundStartTimestamp = room.countdownEndsAt; // beat drops when countdown hits 0
-    room.roundEndsAt = room.roundStartTimestamp + room.roundLength * 1000;
 
-    onPhase(room);
-
-    room.timers.push(
-      setTimeout(() => {
-        room.phase = 'battle';
-        onPhase(room);
-      }, COUNTDOWN_MS),
-    );
-
-    room.timers.push(
-      setTimeout(() => {
-        this.enterRating(room, onPhase);
-      }, COUNTDOWN_MS + room.roundLength * 1000),
-    );
-
+    this.beginTurn(room, 0, cb);
     return {};
   }
 
-  private enterRating(room: Room, onPhase: (room: Room) => void) {
-    room.phase = 'rating';
-    onPhase(room);
+  private beginTurn(room: Room, index: number, cb: RoundCallbacks) {
+    room.timers.forEach(clearTimeout);
+    room.timers = [];
 
-    // Safety net: if not everyone rates, finalize after a generous window.
+    // Skip past anyone who has left since the round began.
+    while (index < room.turnOrder.length && !room.players.has(room.turnOrder[index])) {
+      index += 1;
+    }
+    if (index >= room.turnOrder.length) {
+      this.enterRating(room, cb);
+      return;
+    }
+
+    room.currentTurnIndex = index;
+    room.currentPerformerId = room.turnOrder[index];
+    const now = Date.now();
+    room.phase = 'countdown';
+    room.countdownEndsAt = now + COUNTDOWN_MS;
+    room.performStartTimestamp = room.countdownEndsAt;
+    room.performEndsAt = room.performStartTimestamp + room.roundLength * 1000;
+    cb.broadcast(room);
+
     room.timers.push(
       setTimeout(() => {
-        if (room.phase === 'rating') this.finalizeResults(room, onPhase);
-      }, 90_000),
+        room.phase = 'performing';
+        cb.broadcast(room);
+      }, COUNTDOWN_MS),
+    );
+    // Safety net: advance even if the upload never arrives.
+    room.timers.push(
+      setTimeout(() => {
+        this.advanceTurn(room, index, cb);
+      }, COUNTDOWN_MS + room.roundLength * 1000 + UPLOAD_GRACE_MS),
+    );
+  }
+
+  private advanceTurn(room: Room, fromIndex: number, cb: RoundCallbacks) {
+    if (room.currentTurnIndex !== fromIndex) return; // already moved on
+    this.beginTurn(room, fromIndex + 1, cb);
+  }
+
+  // Called when the current performer leaves mid-turn.
+  performerLeft(room: Room, cb: RoundCallbacks) {
+    if (room.phase === 'countdown' || room.phase === 'performing') {
+      this.advanceTurn(room, room.currentTurnIndex, cb);
+    }
+  }
+
+  submitRecording(
+    room: Room,
+    performerId: string,
+    rec: StoredRecording,
+    cb: RoundCallbacks,
+  ): { error?: string } {
+    if (room.currentPerformerId !== performerId) {
+      return { error: 'It is not your turn.' };
+    }
+    if (room.phase !== 'performing' && room.phase !== 'countdown') {
+      return { error: 'Not in a performing phase.' };
+    }
+    room.recordings.set(performerId, rec);
+    this.advanceTurn(room, room.currentTurnIndex, cb);
+    return {};
+  }
+
+  private enterRating(room: Room, cb: RoundCallbacks) {
+    room.timers.forEach(clearTimeout);
+    room.timers = [];
+    room.phase = 'rating';
+    room.currentTurnIndex = -1;
+    room.currentPerformerId = null;
+    room.countdownEndsAt = null;
+    room.performStartTimestamp = null;
+    room.performEndsAt = null;
+
+    cb.recordings(room); // ship takes to clients
+    cb.broadcast(room);
+
+    // Safety net: finalize if not everyone rates.
+    room.timers.push(
+      setTimeout(() => {
+        if (room.phase === 'rating') this.finalizeResults(room, cb);
+      }, 120_000),
     );
   }
 
@@ -237,33 +302,30 @@ export class Store {
     room: Room,
     raterId: string,
     ratings: Record<string, number>,
-    onPhase: (room: Room) => void,
+    cb: RoundCallbacks,
   ): { error?: string } {
     if (room.phase !== 'rating') return { error: 'Not in the rating phase.' };
     if (!room.players.has(raterId)) return { error: 'You are not in this room.' };
 
     const clean = new Map<string, number>();
     for (const [targetId, score] of Object.entries(ratings)) {
-      if (targetId === raterId) continue; // can't rate yourself
-      if (!room.players.has(targetId)) continue;
+      if (targetId === raterId) continue;
+      if (!room.recordings.has(targetId)) continue; // can only rate actual takes
       const s = Math.round(Number(score));
       if (Number.isFinite(s) && s >= 1 && s <= 10) clean.set(targetId, s);
     }
     room.ratings.set(raterId, clean);
 
-    // Finalize once every currently-online player has submitted.
     const onlineRaters = [...room.players.values()].filter((p) => p.online).map((p) => p.id);
     const allSubmitted = onlineRaters.every((id) => room.ratings.has(id));
-    if (allSubmitted) this.finalizeResults(room, onPhase);
-    else onPhase(room);
-
+    if (allSubmitted) this.finalizeResults(room, cb);
+    else cb.broadcast(room);
     return {};
   }
 
-  private finalizeResults(room: Room, onPhase: (room: Room) => void) {
+  private finalizeResults(room: Room, cb: RoundCallbacks) {
     if (room.phase === 'results') return;
 
-    // Tally: for each target, average the scores they received.
     const received = new Map<string, number[]>();
     for (const byTarget of room.ratings.values()) {
       for (const [targetId, score] of byTarget) {
@@ -272,29 +334,25 @@ export class Store {
       }
     }
 
-    const scores: PlayerRoundScore[] = [...room.players.values()].map((p) => {
-      const list = received.get(p.id) ?? [];
+    // Only people who actually recorded a take are scored.
+    const performers = [...room.recordings.keys()];
+    const scores: PlayerRoundScore[] = performers.map((pid) => {
+      const list = received.get(pid) ?? [];
       const average = list.length ? list.reduce((a, b) => a + b, 0) / list.length : 0;
       return {
-        playerId: p.id,
-        handle: p.handle,
+        playerId: pid,
+        handle: room.players.get(pid)?.handle ?? room.totals.get(pid)?.handle ?? 'MC',
         average: Math.round(average * 100) / 100,
         votes: list.length,
       };
     });
     scores.sort((a, b) => b.average - a.average);
 
-    // Winner: top average, but only if they actually received votes.
     const top = scores[0];
     const winnerId = top && top.votes > 0 && top.average > 0 ? top.playerId : null;
 
-    // Accumulate cumulative totals (survives disconnects).
     for (const s of scores) {
-      const entry = room.totals.get(s.playerId) ?? {
-        handle: s.handle,
-        totalPoints: 0,
-        roundsWon: 0,
-      };
+      const entry = room.totals.get(s.playerId) ?? { handle: s.handle, totalPoints: 0, roundsWon: 0 };
       entry.handle = s.handle;
       entry.totalPoints = Math.round((entry.totalPoints + s.average) * 100) / 100;
       if (s.playerId === winnerId) entry.roundsWon += 1;
@@ -310,21 +368,35 @@ export class Store {
     room.phase = 'results';
     room.timers.forEach(clearTimeout);
     room.timers = [];
-    onPhase(room);
+    cb.broadcast(room);
   }
 
-  // Host advances: go back to lobby to pick the next beat / round.
   returnToLobby(room: Room) {
     room.timers.forEach(clearTimeout);
     room.timers = [];
     room.phase = 'lobby';
+    room.turnOrder = [];
+    room.currentTurnIndex = -1;
+    room.currentPerformerId = null;
     room.countdownEndsAt = null;
-    room.roundStartTimestamp = null;
-    room.roundEndsAt = null;
+    room.performStartTimestamp = null;
+    room.performEndsAt = null;
+    room.recordings = new Map();
     room.ratings = new Map();
   }
 
-  // ---- Snapshot for broadcast ----
+  // The recorded takes for the current round (for shipping to clients).
+  roundRecordings(room: Room): RecordingMeta[] {
+    return [...room.recordings.entries()].map(([performerId, r]) => ({
+      performerId,
+      handle: room.players.get(performerId)?.handle ?? 'MC',
+      beatOffset: r.beatOffset,
+      mimeType: r.mimeType,
+      data: r.data,
+    }));
+  }
+
+  // ---- Snapshot ----
   snapshot(room: Room): RoomState {
     return {
       code: room.code,
@@ -335,9 +407,13 @@ export class Store {
       activeBeatId: room.activeBeatId,
       roundLength: room.roundLength,
       roundNumber: room.roundNumber,
+      turnOrder: room.turnOrder,
+      currentTurnIndex: room.currentTurnIndex,
+      currentPerformerId: room.currentPerformerId,
+      performedIds: [...room.recordings.keys()],
       countdownEndsAt: room.countdownEndsAt,
-      roundStartTimestamp: room.roundStartTimestamp,
-      roundEndsAt: room.roundEndsAt,
+      performStartTimestamp: room.performStartTimestamp,
+      performEndsAt: room.performEndsAt,
       ratingsSubmitted: [...room.ratings.keys()],
       results: room.results,
       leaderboard: this.leaderboard(room),
@@ -353,16 +429,9 @@ export class Store {
       totalPoints: t.totalPoints,
       roundsWon: t.roundsWon,
     }));
-    // Include players who haven't scored yet so the lobby shows everyone.
     for (const p of room.players.values()) {
       if (!room.totals.has(p.id)) {
-        entries.push({
-          playerId: p.id,
-          handle: p.handle,
-          online: p.online,
-          totalPoints: 0,
-          roundsWon: 0,
-        });
+        entries.push({ playerId: p.id, handle: p.handle, online: p.online, totalPoints: 0, roundsWon: 0 });
       }
     }
     entries.sort((a, b) => b.totalPoints - a.totalPoints || b.roundsWon - a.roundsWon);
@@ -375,4 +444,4 @@ function cleanHandle(handle: string): string {
   return h.length ? h : 'MC Anonymous';
 }
 
-export type { Room };
+export type { Room, StoredRecording };
