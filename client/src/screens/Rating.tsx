@@ -16,38 +16,19 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const beatRef = useRef<BeatPlayerHandle>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Mix: duck the beat low and boost the recorded vocal so the rap is clear.
-  const BEAT_VOLUME = 22; // out of 100
-  const VOICE_GAIN = 1.6; // amplify the recorded voice
-  const ctxRef = useRef<AudioContext | null>(null);
+  // Mix: keep the recorded vocal at full volume and duck the beat low under it
+  // so the rap is clearly audible. (Direct element playback = always reliable.)
+  const BEAT_VOLUME = 18; // out of 100
 
-  // Route the recording playback through a gain node so we can make it louder
-  // than the (ducked) beat. Set up once on the persistent <audio> element.
-  useEffect(() => {
-    const el = audioRef.current;
-    if (!el || ctxRef.current) return;
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const src = ctx.createMediaElementSource(el);
-      const gain = ctx.createGain();
-      gain.gain.value = VOICE_GAIN;
-      src.connect(gain);
-      gain.connect(ctx.destination);
-      ctxRef.current = ctx;
-    } catch {
-      /* fall back to the element's own output */
-    }
-    return () => {
-      ctxRef.current?.close().catch(() => {});
-      ctxRef.current = null;
-    };
-  }, [haveTakes]);
-
-  // Takes you can rate = everyone's except your own.
-  const takes = useMemo(
-    () => (haveTakes ? recordings!.recordings.filter((r) => r.performerId !== you) : []),
-    [haveTakes, recordings, you],
-  );
+  // All takes, others first and your OWN take last (so you can listen back to
+  // what you made — you just can't score yourself).
+  const takes = useMemo(() => {
+    if (!haveTakes) return [];
+    const all = recordings!.recordings;
+    const others = all.filter((r) => r.performerId !== you);
+    const mine = all.filter((r) => r.performerId === you);
+    return [...others, ...mine];
+  }, [haveTakes, recordings, you]);
 
   // Build playable object URLs for each take.
   const urls = useMemo(() => {
@@ -69,7 +50,9 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const [busy, setBusy] = useState(false);
 
   const current = takes[idx];
-  const allScored = takes.every((t) => scores[t.performerId] != null);
+  const isMine = !!current && current.performerId === you;
+  // You only need to score everyone else; your own take is listen-only.
+  const allScored = takes.filter((t) => t.performerId !== you).every((t) => scores[t.performerId] != null);
   const waitingOn = room.players.filter((p) => p.online && !room.ratingsSubmitted.includes(p.id));
 
   const stop = () => {
@@ -82,8 +65,8 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     if (!current) return;
     const audio = audioRef.current;
     if (!audio) return;
-    ctxRef.current?.resume().catch(() => {});
     audio.src = urls[current.performerId];
+    audio.volume = 1; // recorded vocal at full
     audio.currentTime = 0;
     // Beat plays underneath, ducked low so the rap sits on top.
     beatRef.current?.seekTo(current.beatOffset);
@@ -115,12 +98,12 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     );
   }
 
-  // Nothing to rate (you were the only MC).
-  if (takes.length === 0 && !submitted) {
+  // Nobody recorded anything this round.
+  if (recordings!.recordings.length === 0 && !submitted) {
     return (
       <div className="rating">
         <h1 className="rating__title">RATE THE BARS</h1>
-        <p className="muted">No other takes to score this round. Waiting for results…</p>
+        <p className="muted">No takes were recorded this round. Waiting for results…</p>
         <button className="btn btn--hot" disabled={busy} onClick={submit}>
           Continue
         </button>
@@ -150,7 +133,9 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     <div className="rating">
       <h1 className="rating__title">RATE THE BARS</h1>
       <p className="muted">
-        Take {idx + 1} of {takes.length} · listen, then score 1–10
+        {isMine
+          ? '🎤 Your take — listen back to what you made'
+          : `Take ${idx + 1} of ${takes.length} · listen, then score 1–10`}
       </p>
 
       {/* Hidden beat player + recorded vocal, played together */}
@@ -160,30 +145,38 @@ export default function Rating({ room, you, actions, recordings }: Props) {
         )}
         <audio ref={audioRef} />
       </div>
+      <p className="battle__beatlabel">over: {beat?.label}</p>
 
       <div className="ratecard ratecard--solo">
-        <span className="ratecard__name">{current?.handle}</span>
+        <span className="ratecard__name">
+          {current?.handle}
+          {isMine && <span className="badge badge--you">YOU</span>}
+        </span>
 
         <button className={`playbtn ${playing ? 'playbtn--on' : ''}`} onClick={playing ? stop : play}>
           <span className="playbtn__icon">{playing ? '■' : '▶'}</span>
-          {playing ? 'Stop' : 'Play take'}
+          {playing ? 'Stop' : isMine ? 'Play my take' : 'Play take'}
         </button>
 
-        <div className="ratecard__scores">
-          {Array.from({ length: 10 }).map((_, i) => {
-            const val = i + 1;
-            const on = current && scores[current.performerId] === val;
-            return (
-              <button
-                key={val}
-                className={`scorebtn ${on ? 'scorebtn--on' : ''}`}
-                onClick={() => current && setScores((s) => ({ ...s, [current.performerId]: val }))}
-              >
-                {val}
-              </button>
-            );
-          })}
-        </div>
+        {isMine ? (
+          <p className="muted">That’s you 🔥 — you can’t score your own take.</p>
+        ) : (
+          <div className="ratecard__scores">
+            {Array.from({ length: 10 }).map((_, i) => {
+              const val = i + 1;
+              const on = current && scores[current.performerId] === val;
+              return (
+                <button
+                  key={val}
+                  className={`scorebtn ${on ? 'scorebtn--on' : ''}`}
+                  onClick={() => current && setScores((s) => ({ ...s, [current.performerId]: val }))}
+                >
+                  {val}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="rating__nav">
@@ -201,7 +194,7 @@ export default function Rating({ room, you, actions, recordings }: Props) {
         {idx < takes.length - 1 ? (
           <button
             className="btn btn--hot"
-            disabled={current ? scores[current.performerId] == null : true}
+            disabled={!isMine && (current ? scores[current.performerId] == null : true)}
             onClick={() => {
               stop();
               setIdx((i) => i + 1);
@@ -211,7 +204,7 @@ export default function Rating({ room, you, actions, recordings }: Props) {
           </button>
         ) : (
           <button className="btn btn--hot btn--big" disabled={!allScored || busy} onClick={submit}>
-            {allScored ? 'LOCK IN SCORES' : 'Score this take'}
+            {allScored ? 'LOCK IN SCORES' : 'Score everyone first'}
           </button>
         )}
       </div>
