@@ -77,6 +77,8 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const [mode, setMode] = useState<'showcase' | 'score'>('showcase');
   const [idx, setIdx] = useState(0);
   const [started, setStarted] = useState(false);
+  const [needsTap, setNeedsTap] = useState(false);
+  const startedRef = useRef(false);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(room.ratingsSubmitted.includes(you));
   const [busy, setBusy] = useState(false);
@@ -122,17 +124,39 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     if (beatBufferRef.current) beatPlayRef.current = playBeatLoop(beatBufferRef.current, BEAT_VOLUME);
 
     const timer = window.setTimeout(advance, (room.roundLength + 12) * 1000);
-    audio.play().catch(() => {
-      /* the safety timer still advances */
-    });
+    audio
+      .play()
+      .then(() => setNeedsTap(false))
+      .catch(() => {
+        // Autoplay blocked (rare here, since they just recorded) — show a
+        // one-tap fallback. The safety timer still advances either way.
+        setNeedsTap(true);
+      });
   };
 
-  const startShowcase = async () => {
-    if (started) return;
-    await unlockAudio(); // user gesture unlocks the AudioContext
-    ensureVocalChain(); // wire the vocal boost now that audio is unlocked
+  const beginShowcase = async () => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    await unlockAudio(); // resume the AudioContext (already unlocked from recording)
+    ensureVocalChain(); // wire the vocal boost
     setStarted(true);
     playFrom(0);
+  };
+
+  // Auto-start the showcase the instant the takes + beat are ready.
+  useEffect(() => {
+    if (mode === 'showcase' && haveTakes && allTakes.length > 0 && beatReady && !startedRef.current) {
+      void beginShowcase();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, haveTakes, allTakes.length, beatReady]);
+
+  // Fallback: if a browser ever blocks autoplay, one tap re-attempts.
+  const tapToPlay = async () => {
+    setNeedsTap(false);
+    await unlockAudio();
+    ensureVocalChain();
+    playFrom(idx);
   };
 
   useEffect(() => {
@@ -190,18 +214,23 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     const isOwn = current?.performerId === you;
     return (
       <div className="rating showcase">
-        {started ? (
+        <p className="showcase__tag">
+          {started ? `NOW PLAYING · ${idx + 1} OF ${allTakes.length}` : 'THE REVIEW'}
+        </p>
+        <h1 className="performing__name">
+          {started ? current?.handle : 'Loading takes…'}
+          {started && isOwn && <span className="badge badge--you">YOU</span>}
+        </h1>
+        <Equalizer bars={15} className="showcase__eq" />
+        <p className="battle__beatlabel">over: {beat?.title ?? 'beat'}</p>
+
+        {needsTap ? (
+          <button className="btn btn--hot btn--big" onClick={() => void tapToPlay()}>
+            ▶ TAP TO PLAY
+          </button>
+        ) : (
           <>
-            <p className="showcase__tag">
-              NOW PLAYING · {idx + 1} OF {allTakes.length}
-            </p>
-            <h1 className="performing__name">
-              {current?.handle}
-              {isOwn && <span className="badge badge--you">YOU</span>}
-            </h1>
-            <Equalizer bars={15} className="showcase__eq" />
-            <p className="battle__beatlabel">over: {beat?.title ?? 'beat'}</p>
-            <p className="muted showcase__hint">Sit back — every take plays once, then you’ll score them.</p>
+            <p className="muted showcase__hint">Every take plays once, then you’ll score them.</p>
             <ul className="showcase__dots">
               {allTakes.map((t, i) => (
                 <li
@@ -210,16 +239,6 @@ export default function Rating({ room, you, actions, recordings }: Props) {
                 />
               ))}
             </ul>
-          </>
-        ) : (
-          <>
-            <h1 className="rating__title">THE REVIEW</h1>
-            <p className="muted">Everyone’s takes are in — press play to hear them all, back to back.</p>
-            <Equalizer bars={11} className="showcase__eq" />
-            <p className="battle__beatlabel">over: {beat?.title ?? 'beat'}</p>
-            <button className="btn btn--hot btn--big" disabled={!beatReady} onClick={() => void startShowcase()}>
-              {beatReady ? '▶ PLAY THE TAKES' : 'Loading…'}
-            </button>
           </>
         )}
         <audio ref={audioRef} />
