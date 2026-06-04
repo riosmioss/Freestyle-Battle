@@ -6,11 +6,15 @@ then everyone listens back to each take (with the beat under it) and scores it
 1–10. A round winner gets crowned and a cumulative leaderboard tracks the whole
 session. You can download every take afterward.
 
-- **Everyone records at once** — the beat drops and every MC records their verse
+- **Curated beat library** — host picks a genre (Hip Hop / Trap); the server
+  rolls a random MP3 beat from it each round. Beats are bundled static assets
+  (no YouTube, no copyright friction).
+- **Everyone records at once** — the beat loops and every MC records their verse
   simultaneously over a shared timer.
-- **Listen-back rating** — play each take with the beat ducked underneath and the
-  vocal boosted, then score it 1–10. Can't rate yourself.
-- **Download the takes** — grab each MC's vocal recording as a file.
+- **Listen-back rating** — every take auto-plays in a showcase with the beat
+  ducked underneath, then you score each MC 1–10. Can't rate yourself.
+- **Download mixed clips** — each take is rendered as a **vocal + beat** WAV you
+  can share.
 - **No database** — lobby state lives in memory, keyed by a 4-char room code.
 - **Public or private lobbies** — list a room publicly or keep it code-only.
 - Dark, gritty battle-rap stage aesthetic.
@@ -81,10 +85,10 @@ cd client && npm install && npm run dev
    Battles** browser on the home screen for anyone to join; private lobbies are
    code-only. The 4-char code always works for either. The host can flip a lobby
    between public/private at any time from the lobby.
-2. **Lobby** — the host pastes YouTube beat links (any normal YouTube URL works),
-   labels them, picks the active beat, and sets each MC's turn length
-   (30/60/90/120s). Everyone sees the player list with live indicators. Host hits
-   **Start the Battle**.
+2. **Lobby** — the host picks a **genre** (Hip Hop / Trap) and the round length
+   (30/60/90/120s); the server rolls a random beat from that genre each round.
+   Everyone sees the player list with live indicators. Host hits **Start the
+   Battle**.
 3. **Record** — a 5-second "beat drops in" countdown, then the beat plays and
    **everyone records their verse at the same time** over one shared timer. When
    the timer hits zero, each take uploads automatically.
@@ -201,10 +205,15 @@ YouTube audio can't be bundled into a saved file.
 
 ### Socket.IO events
 
-**Client → Server:** `createLobby` (with `isPublic`), `joinLobby`, `addBeat`,
-`removeBeat`, `selectBeat`, `setRoundLength`, `setPublic`, `startBattle`,
-`submitRecording`, `submitRating`, `nextRound`, `returnToLobby`, `leaveLobby`,
-`timesync`, `watchLobbies` / `unwatchLobbies` (subscribe to the public list)
+**Client → Server:** `createLobby` (with `isPublic`), `joinLobby`, `selectGenre`,
+`setRoundLength`, `setPublic`, `startBattle`, `submitRecording`, `submitRating`,
+`nextRound`, `returnToLobby`, `leaveLobby`, `timesync`,
+`watchLobbies` / `unwatchLobbies` (subscribe to the public list)
+
+**Beats:** bundled MP3s live in `client/public/beats/`; the manifest is
+`client/src/beats.ts` (full metadata) mirrored by `server/src/beats.ts`
+(id/genre/title for random selection). Playback + the download mix use the Web
+Audio API (`client/src/audio.ts`, `client/src/mix.ts`).
 
 **Server → Client:** `roomState` (the full authoritative snapshot — drives every
 screen), `recordings` (the round's recorded takes, sent at rating),

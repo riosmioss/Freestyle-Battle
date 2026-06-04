@@ -1,5 +1,8 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Equalizer from '../components/Equalizer';
+import { loadBeat } from '../audio';
+import { getBeat } from '../beats';
+import { mixVocalWithBeat } from '../mix';
 import type { RecordingsPayload, RoomState } from '../types';
 import type { GameActions } from '../useGame';
 
@@ -16,34 +19,72 @@ function extFor(mime: string): string {
   return 'webm';
 }
 
+function safeName(handle: string): string {
+  return handle.replace(/[^a-z0-9]+/gi, '_');
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 export default function Results({ room, you, actions, recordings }: Props) {
   const isHost = room.hostId === you;
   const results = room.results;
-
-  // Downloadable vocal takes for this round.
   const haveTakes = recordings && recordings.roundNumber === room.roundNumber;
-  const downloads = useMemo(() => {
-    const map: Record<string, { url: string; filename: string }> = {};
-    if (haveTakes) {
-      for (const r of recordings!.recordings) {
-        const url = URL.createObjectURL(new Blob([r.data], { type: r.mimeType }));
-        const safe = r.handle.replace(/[^a-z0-9]+/gi, '_');
-        map[r.performerId] = { url, filename: `${safe}_round${recordings!.roundNumber}.${extFor(r.mimeType)}` };
-      }
-    }
-    return map;
-  }, [haveTakes, recordings, room.roundNumber]);
+  const beat = getBeat(room.activeBeatId);
 
-  useEffect(() => () => Object.values(downloads).forEach((d) => URL.revokeObjectURL(d.url)), [downloads]);
+  const beatBufferRef = useRef<AudioBuffer | null>(null);
+  const [mixing, setMixing] = useState<Record<string, boolean>>({});
+
+  // Preload the round's beat so downloads can mix it in.
+  useEffect(() => {
+    if (!beat) return;
+    let cancelled = false;
+    loadBeat(beat.file)
+      .then((buf) => {
+        if (!cancelled) beatBufferRef.current = buf;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [beat?.file]);
+
+  const download = async (r: RecordingsPayload['recordings'][number]) => {
+    setMixing((m) => ({ ...m, [r.performerId]: true }));
+    const base = `${safeName(r.handle)}_round${recordings!.roundNumber}`;
+    try {
+      if (beatBufferRef.current) {
+        // Mixed clip: vocal + beat → WAV.
+        const mixed = await mixVocalWithBeat(r.data, beatBufferRef.current);
+        triggerDownload(mixed, `${base}.wav`);
+      } else {
+        triggerDownload(new Blob([r.data], { type: r.mimeType }), `${base}.${extFor(r.mimeType)}`);
+      }
+    } catch {
+      // Mixing failed (e.g. unsupported vocal codec) → save the vocal-only file.
+      triggerDownload(new Blob([r.data], { type: r.mimeType }), `${base}.${extFor(r.mimeType)}`);
+    } finally {
+      setMixing((m) => ({ ...m, [r.performerId]: false }));
+    }
+  };
 
   if (!results) return null;
 
   const winner = results.scores.find((s) => s.playerId === results.winnerId);
-  const hasMoreBeats = room.beats.length > 0;
 
   return (
     <div className="results">
-      <p className="results__round">ROUND {results.roundNumber} · {results.beatLabel}</p>
+      <p className="results__round">
+        ROUND {results.roundNumber} · {results.beatLabel}
+      </p>
 
       {winner ? (
         <div className="crown">
@@ -73,18 +114,22 @@ export default function Results({ room, you, actions, recordings }: Props) {
         </ol>
       </section>
 
-      {/* Download the recorded takes */}
+      {/* Download the mixed takes */}
       {haveTakes && recordings!.recordings.length > 0 && (
         <section className="panel">
           <h2 className="panel__title">Save the Takes</h2>
-          <p className="muted">Vocal recordings from this round (the beat isn’t baked in).</p>
+          <p className="muted">Your verse mixed with the beat — a clip you can share.</p>
           <ul className="takes">
             {recordings!.recordings.map((r) => (
               <li key={r.performerId} className="takerow">
                 <span className="takerow__name">{r.handle}</span>
-                <a className="btn btn--ghost btn--sm" href={downloads[r.performerId]?.url} download={downloads[r.performerId]?.filename}>
-                  ⬇ Download
-                </a>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  disabled={!!mixing[r.performerId]}
+                  onClick={() => download(r)}
+                >
+                  {mixing[r.performerId] ? 'Mixing…' : '⬇ Download'}
+                </button>
               </li>
             ))}
           </ul>
@@ -110,7 +155,7 @@ export default function Results({ room, you, actions, recordings }: Props) {
 
       {isHost ? (
         <div className="results__actions">
-          <button className="btn btn--hot btn--big" disabled={!hasMoreBeats} onClick={() => actions.nextRound()}>
+          <button className="btn btn--hot btn--big" onClick={() => actions.nextRound()}>
             NEXT ROUND
           </button>
           <button className="btn btn--ghost" onClick={() => actions.returnToLobby()}>

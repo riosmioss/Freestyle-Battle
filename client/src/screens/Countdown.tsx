@@ -1,3 +1,4 @@
+import { getBeat } from '../beats';
 import { useCountdown } from '../useCountdown';
 import type { RoomState } from '../types';
 
@@ -8,7 +9,7 @@ interface Props {
 export default function Countdown({ room }: Props) {
   const remaining = useCountdown(room.countdownEndsAt);
   const seconds = Math.ceil(remaining / 1000);
-  const beat = room.beats.find((b) => b.id === room.activeBeatId);
+  const beat = getBeat(room.activeBeatId);
 
   return (
     <div className="countdown">
@@ -22,7 +23,7 @@ export default function Countdown({ room }: Props) {
         <span className="countdown__ring" />
         <span className="countdown__ring" />
       </div>
-      <p className="countdown__beat">{beat?.label ?? ''}</p>
+      <p className="countdown__beat">{beat ? `🎧 ${beat.title}` : ''}</p>
     </div>
   );
 }

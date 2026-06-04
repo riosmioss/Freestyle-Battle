@@ -8,12 +8,7 @@ export interface Player {
   online: boolean;
 }
 
-export interface Beat {
-  id: string;
-  videoId: string;
-  label: string;
-  addedBy: string;
-}
+export type Genre = 'hiphop' | 'trap';
 
 export interface PlayerRoundScore {
   playerId: string;
@@ -42,7 +37,7 @@ export interface RoomState {
   hostId: string;
   phase: Phase;
   players: Player[];
-  beats: Beat[];
+  selectedGenre: Genre;
   activeBeatId: string | null;
   roundLength: number;
   roundNumber: number;

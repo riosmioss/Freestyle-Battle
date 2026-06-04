@@ -85,9 +85,7 @@ export function useGame() {
     [emitAck],
   );
 
-  const addBeat = useCallback((url: string, label: string) => emitAck('addBeat', { url, label }), [emitAck]);
-  const removeBeat = useCallback((beatId: string) => emitAck('removeBeat', { beatId }), [emitAck]);
-  const selectBeat = useCallback((beatId: string) => emitAck('selectBeat', { beatId }), [emitAck]);
+  const selectGenre = useCallback((genre: string) => emitAck('selectGenre', { genre }), [emitAck]);
   const setRoundLength = useCallback((seconds: number) => emitAck('setRoundLength', { seconds }), [emitAck]);
   const setPublic = useCallback((isPublic: boolean) => emitAck('setPublic', { isPublic }), [emitAck]);
   const startBattle = useCallback(() => emitAck('startBattle', {}), [emitAck]);
@@ -119,9 +117,7 @@ export function useGame() {
     actions: {
       createLobby,
       joinLobby,
-      addBeat,
-      removeBeat,
-      selectBeat,
+      selectGenre,
       setRoundLength,
       setPublic,
       startBattle,

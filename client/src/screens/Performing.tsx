@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import BeatPlayer, { type BeatPlayerHandle } from '../components/BeatPlayer';
 import Equalizer from '../components/Equalizer';
+import { loadBeat, playBeatLoop, unlockAudio, type BeatPlayback } from '../audio';
+import { getBeat } from '../beats';
 import { getServerNow } from '../socket';
 import { useCountdown } from '../useCountdown';
 import { pickRecordingMime, type MicState } from '../useMic';
@@ -22,28 +23,58 @@ function fmt(ms: number): string {
 }
 
 export default function Performing({ room, you, mic, actions }: Props) {
-  const beat = room.beats.find((b) => b.id === room.activeBeatId);
+  const beat = getBeat(room.activeBeatId);
   const remaining = useCountdown(room.performEndsAt);
   const total = room.roundLength * 1000;
   const pct = Math.max(0, Math.min(100, (remaining / total) * 100));
   const low = remaining <= 10_000;
 
-  const beatRef = useRef<BeatPlayerHandle>(null);
+  const beatBufferRef = useRef<AudioBuffer | null>(null);
+  const beatPlayRef = useRef<BeatPlayback | null>(null);
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [done, setDone] = useState(false);
+  const [beatError, setBeatError] = useState(false);
 
   const iSaved = room.performedIds.includes(you) || done;
 
-  // Everyone records their verse over the beat for the whole window, then uploads.
+  // Preload the beat buffer.
+  useEffect(() => {
+    if (!beat) return;
+    let cancelled = false;
+    setBeatError(false);
+    loadBeat(beat.file)
+      .then((buf) => {
+        if (!cancelled) beatBufferRef.current = buf;
+      })
+      .catch(() => {
+        if (!cancelled) setBeatError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [beat?.file]);
+
+  const startBeat = async () => {
+    await unlockAudio();
+    let buf = beatBufferRef.current;
+    if (!buf && beat) {
+      buf = await loadBeat(beat.file).catch(() => null);
+      if (buf) beatBufferRef.current = buf;
+    }
+    if (buf) {
+      beatPlayRef.current?.stop();
+      beatPlayRef.current = playBeatLoop(buf, 1);
+    }
+  };
+
+  // Record the verse over the looping beat for the whole window, then upload.
   useEffect(() => {
     if (!mic.stream || room.performEndsAt == null) return;
     let stopped = false;
     const chunks: Blob[] = [];
-    let beatOffset = 0;
 
-    beatRef.current?.seekTo(0);
-    beatRef.current?.play();
+    void startBeat();
 
     let rec: MediaRecorder;
     try {
@@ -56,10 +87,7 @@ export default function Performing({ room, you, mic, actions }: Props) {
     rec.ondataavailable = (e) => {
       if (e.data && e.data.size) chunks.push(e.data);
     };
-    rec.onstart = () => {
-      beatOffset = beatRef.current?.getTime() ?? 0;
-      setRecording(true);
-    };
+    rec.onstart = () => setRecording(true);
 
     const finish = async () => {
       if (stopped) return;
@@ -74,19 +102,20 @@ export default function Performing({ room, you, mic, actions }: Props) {
       } catch {
         /* noop */
       }
+      beatPlayRef.current?.stop();
+      beatPlayRef.current = null;
       setRecording(false);
       setUploading(true);
       try {
         const type = rec.mimeType || 'audio/webm';
         const blob = new Blob(chunks, { type });
         const buf = await blob.arrayBuffer();
-        await actions.submitRecording(beatOffset, type, buf);
+        await actions.submitRecording(0, type, buf);
       } catch {
         /* noop */
       }
       setUploading(false);
       setDone(true);
-      beatRef.current?.pause();
     };
 
     try {
@@ -128,31 +157,31 @@ export default function Performing({ room, you, mic, actions }: Props) {
         <span className="battle__progress-fill" style={{ width: `${iSaved ? 100 : pct}%` }} />
       </div>
 
-      {beat && <BeatPlayer ref={beatRef} videoId={beat.videoId} className={iSaved ? 'beat-player--hidden' : ''} />}
-      <p className="battle__beatlabel">{beat?.label}</p>
+      <Equalizer bars={15} active={!iSaved} className="performing__eq" />
+      <p className="battle__beatlabel">
+        🎧 {beat?.title ?? 'Beat'}
+        {beat?.credit ? ` · ${beat.credit}` : ''}
+      </p>
 
       {!iSaved && (
-        <button className="btn btn--ghost btn--sm" onClick={() => beatRef.current?.play()}>
+        <button className="btn btn--ghost btn--sm" onClick={() => void startBeat()}>
           🔊 Can’t hear the beat? Tap to start it
         </button>
       )}
 
+      {beatError && !iSaved && <p className="error">Couldn’t load the beat audio.</p>}
       {!mic.stream && !iSaved && <p className="error">{mic.error ?? 'Waiting for microphone…'}</p>}
 
       {iSaved ? (
-        <>
-          <p className="muted performing__hint">
-            Your take is in. Waiting for everyone to finish — {savedCount}/{totalPlayers} saved.
-          </p>
-          <Equalizer bars={11} className="performing__eq" />
-        </>
+        <p className="muted performing__hint">
+          Your take is in. Waiting for everyone — {savedCount}/{totalPlayers} saved.
+        </p>
       ) : (
         <p className="muted performing__hint">
           🎧 Headphones recommended. Spit your bars — your take saves automatically when the timer hits zero.
         </p>
       )}
 
-      {/* who's recorded so far */}
       <ul className="turntrack">
         {room.players.map((p) => {
           const saved = room.performedIds.includes(p.id);

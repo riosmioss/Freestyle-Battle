@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Equalizer from '../components/Equalizer';
 import MicCheck from '../components/MicCheck';
+import { GENRES, beatsByGenre, genreLabel } from '../beats';
 import type { RoomState } from '../types';
 import type { GameActions } from '../useGame';
 import type { MicState } from '../useMic';
@@ -16,25 +17,7 @@ const ROUND_LENGTHS = [30, 60, 90, 120];
 
 export default function Lobby({ room, you, actions, mic }: Props) {
   const isHost = room.hostId === you;
-  const [url, setUrl] = useState('');
-  const [label, setLabel] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [beatErr, setBeatErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
-  const addBeat = async () => {
-    if (!url.trim()) return;
-    setAdding(true);
-    setBeatErr(null);
-    const res = await actions.addBeat(url.trim(), label.trim());
-    setAdding(false);
-    if (res.ok) {
-      setUrl('');
-      setLabel('');
-    } else {
-      setBeatErr(res.error ?? 'Could not add that beat.');
-    }
-  };
 
   const copyCode = async () => {
     try {
@@ -46,7 +29,8 @@ export default function Lobby({ room, you, actions, mic }: Props) {
     }
   };
 
-  const canStart = isHost && room.activeBeatId != null && room.players.length >= 1;
+  const canStart = isHost && room.players.length >= 1;
+  const genreCount = beatsByGenre(room.selectedGenre).length;
 
   return (
     <div className="lobby">
@@ -85,65 +69,28 @@ export default function Lobby({ room, you, actions, mic }: Props) {
           </ul>
         </section>
 
-        {/* Beats */}
+        {/* Genre */}
         <section className="panel">
-          <h2 className="panel__title">The Crate · Beats</h2>
-
-          {room.beats.length === 0 && <p className="muted">No beats yet. {isHost ? 'Paste a YouTube link below.' : 'Host is loading the crate.'}</p>}
-
-          <ul className="beats">
-            {room.beats.map((b) => {
-              const active = b.id === room.activeBeatId;
+          <h2 className="panel__title">The Vibe · Genre</h2>
+          <p className="muted">A random {genreLabel(room.selectedGenre)} beat drops each round.</p>
+          <div className="genre">
+            {GENRES.map((g) => {
+              const on = room.selectedGenre === g.id;
               return (
-                <li key={b.id} className={`beat ${active ? 'beat--active' : ''}`}>
-                  <img
-                    className="beat__thumb"
-                    src={`https://i.ytimg.com/vi/${b.videoId}/default.jpg`}
-                    alt=""
-                    loading="lazy"
-                  />
-                  <span className="beat__label">{b.label}</span>
-                  {active && <span className="badge badge--volt">ACTIVE</span>}
-                  {isHost && (
-                    <span className="beat__controls">
-                      {!active && (
-                        <button className="btn btn--xs btn--ghost" onClick={() => actions.selectBeat(b.id)}>
-                          Pick
-                        </button>
-                      )}
-                      <button className="btn btn--xs btn--danger" onClick={() => actions.removeBeat(b.id)}>
-                        ✕
-                      </button>
-                    </span>
-                  )}
-                </li>
+                <button
+                  key={g.id}
+                  className={`genre__btn ${on ? 'genre__btn--on' : ''}`}
+                  disabled={!isHost}
+                  onClick={() => isHost && actions.selectGenre(g.id)}
+                >
+                  <span className="genre__label">{g.label}</span>
+                  <span className="genre__count">{beatsByGenre(g.id).length} beats</span>
+                </button>
               );
             })}
-          </ul>
-
-          {isHost && (
-            <div className="beat-add">
-              <input
-                className="input"
-                placeholder="Paste YouTube link…"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addBeat()}
-              />
-              <input
-                className="input"
-                placeholder="Label (optional)"
-                value={label}
-                maxLength={40}
-                onChange={(e) => setLabel(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addBeat()}
-              />
-              <button className="btn btn--hot btn--sm" disabled={adding} onClick={addBeat}>
-                Add
-              </button>
-              {beatErr && <p className="error">{beatErr}</p>}
-            </div>
-          )}
+          </div>
+          {genreCount === 0 && <p className="error">No beats loaded for this genre yet.</p>}
+          {!isHost && <p className="muted">Only the host can change the genre.</p>}
         </section>
       </div>
 
@@ -177,7 +124,7 @@ export default function Lobby({ room, you, actions, mic }: Props) {
             </div>
           </div>
           <button className="btn btn--hot btn--big" disabled={!canStart} onClick={() => actions.startBattle()}>
-            {room.activeBeatId ? 'START THE BATTLE' : 'Pick a beat to start'}
+            START THE BATTLE
           </button>
         </section>
       ) : (

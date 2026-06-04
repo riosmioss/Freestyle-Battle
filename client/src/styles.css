@@ -764,6 +764,40 @@ body {
 .meter__bar--on { background: var(--volt); }
 .meter__bar--on.meter__bar--hot { background: var(--hot); }
 
+/* ---------- Genre selector (lobby) ---------- */
+.genre {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+.genre__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  background: var(--bg-2);
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.08s, box-shadow 0.15s;
+}
+.genre__btn:hover:not(:disabled) { transform: translateY(-1px); }
+.genre__btn:disabled { cursor: default; opacity: 0.7; }
+.genre__btn--on {
+  border-color: var(--hot);
+  box-shadow: 0 0 24px rgba(255, 77, 46, 0.25), inset 0 0 0 1px var(--hot);
+}
+.genre__label {
+  font-family: var(--display);
+  font-size: 26px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.genre__btn--on .genre__label { color: var(--hot); }
+.genre__count { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.08em; }
+
 /* ---------- Countdown turn label ---------- */
 .countdown__turn {
   font-family: var(--mono);

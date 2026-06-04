@@ -2,15 +2,13 @@ import http from 'node:http';
 import cors from 'cors';
 import express from 'express';
 import { Server } from 'socket.io';
+import { isGenre } from './beats.js';
 import { Store, type Room, type RoundCallbacks } from './store.js';
-import { parseYouTubeId } from './youtube.js';
 import type {
   Ack,
-  AddBeatPayload,
   CreateLobbyPayload,
   JoinLobbyPayload,
-  RemoveBeatPayload,
-  SelectBeatPayload,
+  SelectGenrePayload,
   SetPublicPayload,
   SetRoundLengthPayload,
   SubmitRatingPayload,
@@ -108,34 +106,12 @@ io.on('connection', (socket) => {
     broadcastAll(room);
   });
 
-  // ---- Host: beat & round configuration ----
-  socket.on('addBeat', (payload: AddBeatPayload, ack: Ack<{ beatId: string }>) => {
+  // ---- Host: genre & round configuration ----
+  socket.on('selectGenre', (payload: SelectGenrePayload, ack: Ack) => {
     const room = requireHost(socket.id, ack);
     if (!room) return;
-    const videoId = parseYouTubeId(payload?.url ?? '');
-    if (!videoId) {
-      ack?.({ ok: false, error: 'That does not look like a valid YouTube link.' });
-      return;
-    }
-    const label = (payload?.label ?? '').trim().slice(0, 40) || `Beat ${room.beats.length + 1}`;
-    const beat = store.addBeat(room, videoId, label, socket.id);
-    ack?.({ ok: true, beatId: beat.id });
-    broadcast(room);
-  });
-
-  socket.on('removeBeat', (payload: RemoveBeatPayload, ack: Ack) => {
-    const room = requireHost(socket.id, ack);
-    if (!room) return;
-    store.removeBeat(room, payload?.beatId);
-    ack?.({ ok: true });
-    broadcast(room);
-  });
-
-  socket.on('selectBeat', (payload: SelectBeatPayload, ack: Ack) => {
-    const room = requireHost(socket.id, ack);
-    if (!room) return;
-    if (room.beats.some((b) => b.id === payload?.beatId)) {
-      room.activeBeatId = payload.beatId;
+    if (isGenre(payload?.genre)) {
+      store.setGenre(room, payload.genre);
       broadcast(room);
     }
     ack?.({ ok: true });
@@ -193,7 +169,7 @@ io.on('connection', (socket) => {
   socket.on('nextRound', (_payload: unknown, ack: Ack) => {
     const room = requireHost(socket.id, ack);
     if (!room) return;
-    store.rotateActiveBeat(room); // fresh beat each round (wraps around)
+    // startBattle rolls a fresh random beat from the genre for the new round.
     const { error } = store.startBattle(room, roundCb);
     ack?.(error ? { ok: false, error } : { ok: true });
   });

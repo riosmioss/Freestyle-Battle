@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
+import { beatTitle, randomBeatId, type Genre } from './beats.js';
 import type {
-  Beat,
   LeaderboardEntry,
   Phase,
   Player,
@@ -42,7 +42,7 @@ interface Room {
   phase: Phase;
   isPublic: boolean;
   players: Map<string, Player>;
-  beats: Beat[];
+  selectedGenre: Genre;
   activeBeatId: string | null;
   roundLength: number;
   roundNumber: number;
@@ -84,7 +84,7 @@ export class Store {
       phase: 'lobby',
       isPublic,
       players: new Map(),
-      beats: [],
+      selectedGenre: 'hiphop',
       activeBeatId: null,
       roundLength: 60,
       roundNumber: 0,
@@ -140,23 +140,13 @@ export class Store {
     this.rooms.delete(room.code);
   }
 
-  addBeat(room: Room, videoId: string, label: string, addedBy: string): Beat {
-    const beat: Beat = { id: nanoid(8), videoId, label, addedBy };
-    room.beats.push(beat);
-    if (!room.activeBeatId) room.activeBeatId = beat.id;
-    return beat;
+  setGenre(room: Room, genre: Genre) {
+    room.selectedGenre = genre;
   }
 
-  rotateActiveBeat(room: Room) {
-    if (room.beats.length <= 1) return;
-    const idx = room.beats.findIndex((b) => b.id === room.activeBeatId);
-    const next = room.beats[(idx + 1) % room.beats.length];
-    room.activeBeatId = next.id;
-  }
-
-  removeBeat(room: Room, beatId: string) {
-    room.beats = room.beats.filter((b) => b.id !== beatId);
-    if (room.activeBeatId === beatId) room.activeBeatId = room.beats[0]?.id ?? null;
+  // Roll a fresh random beat from the room's genre (avoids the previous one).
+  pickBeat(room: Room) {
+    room.activeBeatId = randomBeatId(room.selectedGenre, room.activeBeatId) || null;
   }
 
   setPublic(room: Room, isPublic: boolean) {
@@ -190,10 +180,13 @@ export class Store {
     if (room.phase !== 'lobby' && room.phase !== 'results') {
       return { error: 'Battle already in progress.' };
     }
-    if (!room.activeBeatId) return { error: 'Pick a beat first.' };
 
     const online = [...room.players.values()].filter((p) => p.online).map((p) => p.id);
     if (online.length === 0) return { error: 'No MCs to perform.' };
+
+    // Roll a random beat from the chosen genre for this round.
+    this.pickBeat(room);
+    if (!room.activeBeatId) return { error: 'No beats available for that genre.' };
 
     room.timers.forEach(clearTimeout);
     room.timers = [];
@@ -340,7 +333,7 @@ export class Store {
 
     room.results = {
       roundNumber: room.roundNumber,
-      beatLabel: room.beats.find((b) => b.id === room.activeBeatId)?.label ?? 'Unknown beat',
+      beatLabel: beatTitle(room.activeBeatId),
       scores,
       winnerId,
     };
@@ -379,7 +372,7 @@ export class Store {
       hostId: room.hostId,
       phase: room.phase,
       players: [...room.players.values()],
-      beats: room.beats,
+      selectedGenre: room.selectedGenre,
       activeBeatId: room.activeBeatId,
       roundLength: room.roundLength,
       roundNumber: room.roundNumber,

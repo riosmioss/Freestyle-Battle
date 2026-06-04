@@ -1,5 +1,8 @@
 // Shared game types. The server is the single source of truth for all of this.
 
+import type { Genre } from './beats.js';
+export type { Genre };
+
 // Turn-based recorded battle:
 //   lobby -> countdown -> performing (one MC records) -> ...repeat per MC...
 //   -> rating (play back each take + score) -> results -> (loop)
@@ -9,13 +12,6 @@ export interface Player {
   id: string; // socket id
   handle: string;
   online: boolean;
-}
-
-export interface Beat {
-  id: string;
-  videoId: string;
-  label: string;
-  addedBy: string; // player id
 }
 
 // One player's averaged score for a single round.
@@ -48,8 +44,8 @@ export interface RoomState {
   hostId: string;
   phase: Phase;
   players: Player[];
-  beats: Beat[];
-  activeBeatId: string | null;
+  selectedGenre: Genre; // host-chosen genre (server rolls a random beat from it)
+  activeBeatId: string | null; // the randomly chosen beat id for the current round
   roundLength: number; // seconds everyone records for
   roundNumber: number;
 
@@ -100,15 +96,8 @@ export interface JoinLobbyPayload {
   code: string;
   handle: string;
 }
-export interface AddBeatPayload {
-  url: string;
-  label?: string;
-}
-export interface SelectBeatPayload {
-  beatId: string;
-}
-export interface RemoveBeatPayload {
-  beatId: string;
+export interface SelectGenrePayload {
+  genre: Genre;
 }
 export interface SetRoundLengthPayload {
   seconds: number;
