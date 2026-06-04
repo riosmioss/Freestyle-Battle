@@ -11,7 +11,7 @@ interface Props {
   recordings: RecordingsPayload | null;
 }
 
-const BEAT_VOLUME = 18; // duck the beat low under the vocal
+const BEAT_VOLUME = 50; // beat under the vocal — loud enough to clearly hear
 
 export default function Rating({ room, you, actions, recordings }: Props) {
   const haveTakes = recordings && recordings.roundNumber === room.roundNumber;
@@ -19,12 +19,7 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const beatRef = useRef<BeatPlayerHandle>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Every take, in recorded order — the whole showcase plays through these.
-  const allTakes = useMemo(
-    () => (haveTakes ? recordings!.recordings : []),
-    [haveTakes, recordings],
-  );
-  // You score everyone except yourself.
+  const allTakes = useMemo(() => (haveTakes ? recordings!.recordings : []), [haveTakes, recordings]);
   const scoreTargets = useMemo(() => allTakes.filter((t) => t.performerId !== you), [allTakes, you]);
 
   const urls = useMemo(() => {
@@ -36,18 +31,17 @@ export default function Rating({ room, you, actions, recordings }: Props) {
 
   const [mode, setMode] = useState<'showcase' | 'score'>('showcase');
   const [idx, setIdx] = useState(0);
-  const [needsGesture, setNeedsGesture] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [beatReady, setBeatReady] = useState(false);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(room.ratingsSubmitted.includes(you));
   const [busy, setBusy] = useState(false);
-  const startedRef = useRef(false);
 
-  // ---- Showcase playback engine: play each take once, then auto-advance ----
+  // ---- Showcase engine: play each take once, then auto-advance ----
   const playFrom = (i: number) => {
     const t = allTakes[i];
     const audio = audioRef.current;
     if (!t || !audio) {
-      // Reached the end → go to scoring.
       try {
         audio?.pause();
       } catch {
@@ -74,40 +68,36 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     audio.volume = 1;
     audio.currentTime = 0;
 
+    // Start the beat underneath (the unlock came from the user's "play" tap).
     beatRef.current?.seekTo(t.beatOffset);
     beatRef.current?.play();
     beatRef.current?.setVolume(BEAT_VOLUME);
 
-    // Safety net in case 'ended' never fires (corrupt clip etc.).
     const timer = window.setTimeout(advance, (room.roundLength + 12) * 1000);
-
-    const p = audio.play();
-    if (p) {
-      p.then(() => setNeedsGesture(false)).catch(() => {
-        // Browser blocked autoplay — wait for one tap.
-        clearTimeout(timer);
-        audio.onended = null;
-        audio.onerror = null;
-        setNeedsGesture(true);
-      });
-    }
+    audio.play().catch(() => {
+      /* if the vocal can't start, the safety timer still advances */
+    });
   };
 
-  // Kick off the showcase when takes arrive.
-  useEffect(() => {
-    if (!haveTakes || startedRef.current) return;
-    if (allTakes.length === 0) {
-      setMode('score');
-      return;
-    }
-    startedRef.current = true;
+  const startShowcase = () => {
+    if (started) return;
+    setStarted(true);
     playFrom(0);
-    return () => {
+  };
+
+  // If nobody recorded, skip straight to scoring.
+  useEffect(() => {
+    if (haveTakes && allTakes.length === 0) setMode('score');
+  }, [haveTakes, allTakes.length]);
+
+  // Stop everything when leaving the screen.
+  useEffect(
+    () => () => {
       audioRef.current?.pause();
       beatRef.current?.pause();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [haveTakes]);
+    },
+    [],
+  );
 
   const submit = async () => {
     setBusy(true);
@@ -119,7 +109,6 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const waitingOn = room.players.filter((p) => p.online && !room.ratingsSubmitted.includes(p.id));
   const allScored = scoreTargets.every((t) => scores[t.performerId] != null);
 
-  // ---- Loading ----
   if (!haveTakes) {
     return (
       <div className="rating">
@@ -129,7 +118,6 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     );
   }
 
-  // ---- Submitted: waiting for others ----
   if (submitted) {
     return (
       <div className="rating rating--done">
@@ -148,50 +136,68 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     );
   }
 
-  // ---- Showcase: takes auto-play one after another ----
-  if (mode === 'showcase') {
+  // ---- Showcase ----
+  if (mode === 'showcase' && allTakes.length > 0) {
     const current = allTakes[idx];
     const isOwn = current?.performerId === you;
+    const loadingBeat = !!beat && !beatReady;
     return (
       <div className="rating showcase">
-        <p className="showcase__tag">
-          NOW PLAYING · {idx + 1} OF {allTakes.length}
-        </p>
-        <h1 className="performing__name">
-          {current?.handle}
-          {isOwn && <span className="badge badge--you">YOU</span>}
-        </h1>
-        <Equalizer bars={15} className="showcase__eq" />
+        {started ? (
+          <>
+            <p className="showcase__tag">
+              NOW PLAYING · {idx + 1} OF {allTakes.length}
+            </p>
+            <h1 className="performing__name">
+              {current?.handle}
+              {isOwn && <span className="badge badge--you">YOU</span>}
+            </h1>
+            <Equalizer bars={15} className="showcase__eq" />
+          </>
+        ) : (
+          <>
+            <h1 className="rating__title">THE REVIEW</h1>
+            <p className="muted">Everyone’s takes are in — press play to hear them all, back to back.</p>
+          </>
+        )}
 
+        {/* The beat player is mounted ONCE and reused for every take. */}
         <div className="rating__stage">
           {beat && (
-            <BeatPlayer ref={beatRef} videoId={beat.videoId} className="beat-player--mini" volume={BEAT_VOLUME} />
+            <BeatPlayer
+              ref={beatRef}
+              videoId={beat.videoId}
+              className="beat-player--mini"
+              volume={BEAT_VOLUME}
+              onReady={() => setBeatReady(true)}
+            />
           )}
           <audio ref={audioRef} />
         </div>
         <p className="battle__beatlabel">over: {beat?.label}</p>
 
-        {needsGesture ? (
-          <button className="btn btn--hot btn--big" onClick={() => playFrom(idx)}>
-            ▶ PLAY THE TAKES
-          </button>
+        {started ? (
+          <>
+            <p className="muted showcase__hint">Sit back — every take plays once, then you’ll score them.</p>
+            <ul className="showcase__dots">
+              {allTakes.map((t, i) => (
+                <li
+                  key={t.performerId}
+                  className={`showcase__dot ${i < idx ? 'is-done' : ''} ${i === idx ? 'is-now' : ''}`}
+                />
+              ))}
+            </ul>
+          </>
         ) : (
-          <p className="muted showcase__hint">
-            Sit back — every take plays once, then you’ll score them.
-          </p>
+          <button className="btn btn--hot btn--big" disabled={loadingBeat} onClick={startShowcase}>
+            {loadingBeat ? 'Loading beat…' : '▶ PLAY THE TAKES'}
+          </button>
         )}
-
-        {/* progress dots */}
-        <ul className="showcase__dots">
-          {allTakes.map((t, i) => (
-            <li key={t.performerId} className={`showcase__dot ${i < idx ? 'is-done' : ''} ${i === idx ? 'is-now' : ''}`} />
-          ))}
-        </ul>
       </div>
     );
   }
 
-  // ---- Score: rate each MC 1–10 ----
+  // ---- Score ----
   if (scoreTargets.length === 0) {
     return (
       <div className="rating">
