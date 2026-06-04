@@ -26,15 +26,15 @@ export interface BeatMeta {
 
 export const BEATS: BeatMeta[] = [
   // --- Hip Hop ---
-  { id: 'hiphop-1', title: 'Hip Hop Beat 1', genre: 'hiphop', file: '/beats/hiphop-1.mp3' },
-  { id: 'hiphop-2', title: 'Hip Hop Beat 2', genre: 'hiphop', file: '/beats/hiphop-2.mp3' },
-  { id: 'hiphop-3', title: 'Hip Hop Beat 3', genre: 'hiphop', file: '/beats/hiphop-3.mp3' },
-  { id: 'hiphop-4', title: 'Hip Hop Beat 4', genre: 'hiphop', file: '/beats/hiphop-4.mp3' },
+  { id: 'hiphop-1', title: 'Hip Hop 1', genre: 'hiphop', file: '/beats/hiphop-1.mp3' },
+  { id: 'hiphop-2', title: 'Hip Hop 2', genre: 'hiphop', file: '/beats/hiphop-2.mp3' },
+  { id: 'hiphop-3', title: 'Hip Hop 3', genre: 'hiphop', file: '/beats/hiphop-3.mp3' },
+  { id: 'hiphop-4', title: 'Hip Hop 4', genre: 'hiphop', file: '/beats/hiphop-4.mp3' },
   // --- Trap ---
-  { id: 'trap-1', title: 'Trap Beat 1', genre: 'trap', file: '/beats/trap-1.mp3' },
-  { id: 'trap-2', title: 'Trap Beat 2', genre: 'trap', file: '/beats/trap-2.mp3' },
-  { id: 'trap-3', title: 'Trap Beat 3', genre: 'trap', file: '/beats/trap-3.mp3' },
-  { id: 'trap-4', title: 'Trap Beat 4', genre: 'trap', file: '/beats/trap-4.mp3' },
+  { id: 'trap-1', title: 'Trap 1', genre: 'trap', file: '/beats/trap-1.mp3' },
+  { id: 'trap-2', title: 'Trap 2', genre: 'trap', file: '/beats/trap-2.mp3' },
+  { id: 'trap-3', title: 'Trap 3', genre: 'trap', file: '/beats/trap-3.mp3' },
+  { id: 'trap-4', title: 'Trap 4', genre: 'trap', file: '/beats/trap-4.mp3' },
 ];
 
 export const GENRES: { id: Genre; label: string }[] = [

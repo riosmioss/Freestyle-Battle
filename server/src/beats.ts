@@ -17,14 +17,14 @@ export interface ServerBeat {
 }
 
 export const BEATS: ServerBeat[] = [
-  { id: 'hiphop-1', title: 'Hip Hop Beat 1', genre: 'hiphop' },
-  { id: 'hiphop-2', title: 'Hip Hop Beat 2', genre: 'hiphop' },
-  { id: 'hiphop-3', title: 'Hip Hop Beat 3', genre: 'hiphop' },
-  { id: 'hiphop-4', title: 'Hip Hop Beat 4', genre: 'hiphop' },
-  { id: 'trap-1', title: 'Trap Beat 1', genre: 'trap' },
-  { id: 'trap-2', title: 'Trap Beat 2', genre: 'trap' },
-  { id: 'trap-3', title: 'Trap Beat 3', genre: 'trap' },
-  { id: 'trap-4', title: 'Trap Beat 4', genre: 'trap' },
+  { id: 'hiphop-1', title: 'Hip Hop 1', genre: 'hiphop' },
+  { id: 'hiphop-2', title: 'Hip Hop 2', genre: 'hiphop' },
+  { id: 'hiphop-3', title: 'Hip Hop 3', genre: 'hiphop' },
+  { id: 'hiphop-4', title: 'Hip Hop 4', genre: 'hiphop' },
+  { id: 'trap-1', title: 'Trap 1', genre: 'trap' },
+  { id: 'trap-2', title: 'Trap 2', genre: 'trap' },
+  { id: 'trap-3', title: 'Trap 3', genre: 'trap' },
+  { id: 'trap-4', title: 'Trap 4', genre: 'trap' },
 ];
 
 export function isGenre(g: unknown): g is Genre {
