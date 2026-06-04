@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import AuthPanel from '../components/AuthPanel';
 import Equalizer from '../components/Equalizer';
 import type { PublicLobby } from '../types';
 import type { GameActions } from '../useGame';
+import type { useAuth } from '../useAuth';
 
 interface Props {
   actions: GameActions;
   connected: boolean;
   error: string | null;
   publicLobbies: PublicLobby[];
+  auth: ReturnType<typeof useAuth>;
 }
 
 const HANDLE_KEY = 'fb_handle';
@@ -20,7 +23,7 @@ const phaseLabel: Record<string, string> = {
   results: 'Results',
 };
 
-export default function Home({ actions, connected, error, publicLobbies }: Props) {
+export default function Home({ actions, connected, error, publicLobbies, auth }: Props) {
   const [handle, setHandle] = useState(() => localStorage.getItem(HANDLE_KEY) ?? '');
   const [code, setCode] = useState('');
   const [mode, setMode] = useState<'idle' | 'join'>('idle');
@@ -28,7 +31,19 @@ export default function Home({ actions, connected, error, publicLobbies }: Props
   const [busy, setBusy] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
 
-  const remember = () => localStorage.setItem(HANDLE_KEY, handle.trim());
+  // When signed in, your handle comes from your saved profile.
+  const signedIn = !!auth.profile;
+  useEffect(() => {
+    if (auth.profile?.handle) setHandle(auth.profile.handle);
+  }, [auth.profile?.handle]);
+
+  const remember = () => {
+    localStorage.setItem(HANDLE_KEY, handle.trim());
+    // Keep the signed-in profile handle in sync if they changed it here.
+    if (signedIn && handle.trim() && handle.trim() !== auth.profile?.handle) {
+      void auth.updateHandle(handle.trim());
+    }
+  };
   const needHandle = () => {
     if (!handle.trim()) {
       setLocalErr('Pick a handle first.');
@@ -73,6 +88,8 @@ export default function Home({ actions, connected, error, publicLobbies }: Props
           <span className="home__title-accent">BATTLE</span>
         </h1>
         <p className="home__tag">Same beat. Live mics. One crown.</p>
+
+        <AuthPanel auth={auth} />
 
         <div className="panel home__panel">
           <label className="field">

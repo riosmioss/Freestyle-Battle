@@ -11,6 +11,9 @@
 [build.environment]
   # The always-on game server on Render.
   VITE_SERVER_URL = "https://freestyle-battle-server.onrender.com"
+  # Supabase (auth + profiles). These are the SAFE-to-expose values only.
+  VITE_SUPABASE_URL = "https://ptiefyqqiaifbalvswlk.supabase.co"
+  VITE_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_QdUrjuvrZApNCN1xBtHQBQ_rnEjEMiy"
 
 # Single-page-app fallback so every route serves index.html.
 [[redirects]]

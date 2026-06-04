@@ -251,6 +251,36 @@ body {
   100% { height: 100%; opacity: 1; }
 }
 
+/* ---------- Auth bar (home) ---------- */
+.authbar {
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.authbar--in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.authbar__tag {
+  margin: 0 0 10px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--cream);
+}
+.authbar__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.authbar__email { display: flex; gap: 8px; flex: 1; min-width: 220px; }
+.authbar__email .input { padding: 9px 12px; font-size: 14px; }
+.authbar__guest { margin: 10px 0 0; font-size: 12px; }
+.authbar__who { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.authbar__avatar { font-size: 20px; }
+.authbar__name { letter-spacing: 0.02em; }
+.authbar__rating { font-family: var(--mono); color: var(--volt); font-size: 13px; }
+
 /* ---------- Home ---------- */
 .home { display: flex; justify-content: center; padding-top: 6vh; }
 .home__stage { text-align: center; width: 100%; max-width: 440px; }

@@ -6,11 +6,13 @@ import Lobby from './screens/Lobby';
 import Performing from './screens/Performing';
 import Rating from './screens/Rating';
 import Results from './screens/Results';
+import { useAuth } from './useAuth';
 import { useGame } from './useGame';
 import { useMic } from './useMic';
 
 export default function App() {
   const { connected, room, you, error, publicLobbies, recordings, actions } = useGame();
+  const auth = useAuth();
 
   // We only need the mic to record your turn — acquired once you're in a room.
   const mic = useMic(!!room);
@@ -18,7 +20,13 @@ export default function App() {
   let screen: React.ReactNode;
   if (!room) {
     screen = (
-      <Home actions={actions} connected={connected} error={error} publicLobbies={publicLobbies} />
+      <Home
+        actions={actions}
+        connected={connected}
+        error={error}
+        publicLobbies={publicLobbies}
+        auth={auth}
+      />
     );
   } else {
     switch (room.phase) {
