@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Equalizer from '../components/Equalizer';
-import { loadBeat, playBeatLoop, unlockAudio, type BeatPlayback } from '../audio';
+import { getCtx, loadBeat, playBeatLoop, unlockAudio, type BeatPlayback } from '../audio';
 import { getBeat } from '../beats';
 import type { RecordingsPayload, RoomState } from '../types';
 import type { GameActions } from '../useGame';
@@ -12,7 +12,8 @@ interface Props {
   recordings: RecordingsPayload | null;
 }
 
-const DUCK = 0.5; // beat volume under the vocal
+const BEAT_VOLUME = 0.25; // beat ducked low under the vocal
+const VOCAL_GAIN = 2.0; // boost the recorded vocal above 100%
 
 export default function Rating({ room, you, actions, recordings }: Props) {
   const haveTakes = recordings && recordings.roundNumber === room.roundNumber;
@@ -20,7 +21,26 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const beatBufferRef = useRef<AudioBuffer | null>(null);
   const beatPlayRef = useRef<BeatPlayback | null>(null);
+  const vocalChainRef = useRef<{ gain: GainNode } | null>(null);
   const [beatReady, setBeatReady] = useState(false);
+
+  // Route the vocal <audio> through a Web Audio gain so we can boost it past
+  // 100% (an <audio> element alone caps at 1.0). Created once, after the
+  // AudioContext is unlocked by the user's "play" tap.
+  const ensureVocalChain = () => {
+    if (vocalChainRef.current || !audioRef.current) return;
+    try {
+      const ctx = getCtx();
+      const src = ctx.createMediaElementSource(audioRef.current);
+      const gain = ctx.createGain();
+      gain.gain.value = VOCAL_GAIN;
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      vocalChainRef.current = { gain };
+    } catch {
+      /* already connected, or unsupported — vocal still plays at 1.0 */
+    }
+  };
 
   const allTakes = useMemo(() => (haveTakes ? recordings!.recordings : []), [haveTakes, recordings]);
   const scoreTargets = useMemo(() => allTakes.filter((t) => t.performerId !== you), [allTakes, you]);
@@ -97,9 +117,9 @@ export default function Rating({ room, you, actions, recordings }: Props) {
     audio.volume = 1;
     audio.currentTime = 0;
 
-    // Restart the beat from 0 under this take, ducked.
+    // Restart the beat from 0 under this take, ducked low.
     stopBeat();
-    if (beatBufferRef.current) beatPlayRef.current = playBeatLoop(beatBufferRef.current, DUCK);
+    if (beatBufferRef.current) beatPlayRef.current = playBeatLoop(beatBufferRef.current, BEAT_VOLUME);
 
     const timer = window.setTimeout(advance, (room.roundLength + 12) * 1000);
     audio.play().catch(() => {
@@ -110,6 +130,7 @@ export default function Rating({ room, you, actions, recordings }: Props) {
   const startShowcase = async () => {
     if (started) return;
     await unlockAudio(); // user gesture unlocks the AudioContext
+    ensureVocalChain(); // wire the vocal boost now that audio is unlocked
     setStarted(true);
     playFrom(0);
   };

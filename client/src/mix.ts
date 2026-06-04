@@ -5,7 +5,8 @@ import { getCtx } from './audio';
 // result. WAV keeps it dependency-free; swap to MP3 (lamejs) later if file size
 // matters for sharing.
 
-const DUCK = 0.5; // beat volume under the vocal (matches the showcase mix)
+const BEAT_VOLUME = 0.25; // beat ducked low (matches the showcase)
+const VOCAL_GAIN = 2.0; // boosted vocal (matches the showcase)
 
 export async function mixVocalWithBeat(
   vocalData: ArrayBuffer,
@@ -19,10 +20,13 @@ export async function mixVocalWithBeat(
   const length = Math.max(1, Math.ceil(vocal.duration * sampleRate));
   const off = new OfflineAudioContext(channels, length, sampleRate);
 
-  // Vocal at full volume.
+  // Vocal boosted.
   const v = off.createBufferSource();
   v.buffer = vocal;
-  v.connect(off.destination);
+  const vGain = off.createGain();
+  vGain.gain.value = VOCAL_GAIN;
+  v.connect(vGain);
+  vGain.connect(off.destination);
   v.start(0);
 
   // Beat looped underneath, ducked, trimmed to the vocal length.
@@ -30,14 +34,34 @@ export async function mixVocalWithBeat(
   b.buffer = beatBuffer;
   b.loop = true;
   const g = off.createGain();
-  g.gain.value = DUCK;
+  g.gain.value = BEAT_VOLUME;
   b.connect(g);
   g.connect(off.destination);
   b.start(0);
   b.stop(vocal.duration);
 
   const rendered = await off.startRendering();
+  normalize(rendered); // scale down if the boosted mix peaks above 1.0
   return bufferToWav(rendered);
+}
+
+// Prevent clipping: if the loudest sample exceeds 1.0, scale the whole mix down.
+function normalize(buffer: AudioBuffer) {
+  let peak = 0;
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < data.length; i++) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+  }
+  if (peak > 1) {
+    const scale = 1 / peak;
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const data = buffer.getChannelData(c);
+      for (let i = 0; i < data.length; i++) data[i] *= scale;
+    }
+  }
 }
 
 // Encode an AudioBuffer to a 16-bit PCM WAV Blob.
